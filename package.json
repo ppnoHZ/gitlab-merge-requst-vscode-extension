@@ -12,44 +12,81 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onStartupFinished"
+    "onCommand:gitlabMr.createMergeRequest",
+    "onCommand:gitlabMr.setToken",
+    "onCommand:gitlabMr.openSettings",
+    "onCommand:gitlabMr.configureInstanceUrl",
+    "onCommand:gitlabMr.showLogs",
+    "onCommand:gitlabMr.checkReleaseReadiness",
+    "onCommand:gitlabMr.refreshReleaseReadiness",
+    "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
+    "onCommand:gitlabMr.openReleaseMergeRequest",
+    "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
       {
         "command": "gitlabMr.createMergeRequest",
-        "title": "GitLab: Create Merge Request",
+        "title": "Create Merge Request (一键创建 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.checkReleaseReadiness",
+        "title": "Check Release Readiness (检查上线分支合并状态)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.refreshReleaseReadiness",
+        "title": "Refresh Release Readiness (刷新上线检查)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.createReleaseFeatureMergeRequest",
+        "title": "Create Feature Merge Request (为该功能分支创建 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.openReleaseMergeRequest",
+        "title": "Open Release Merge Request (打开已有 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.openSettings",
+        "title": "Open Settings (打开可视化配置面板)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.configureInstanceUrl",
+        "title": "Configure GitLab Server Address (配置 GitLab 地址)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.showLogs",
+        "title": "Show Logs (查看控制台输出日志)",
         "category": "GitLab MR"
       },
       {
         "command": "gitlabMr.setToken",
-        "title": "GitLab: Set Access Token",
+        "title": "Set Access Token (快速录入 Token)",
         "category": "GitLab MR"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "GitLab Auto MR",
+      "title": "GitLab Auto MR 配置",
+      "order": 1,
       "properties": {
-        "gitlabMr.instanceUrl": {
-          "type": "string",
-          "default": "https://gitlab.com",
-          "description": "GitLab 实例地址，私有部署如 https://gitlab.yourcompany.com（末尾无需斜杠）"
-        },
         "gitlabMr.accessToken": {
           "type": "string",
           "default": "",
-          "description": "GitLab Personal Access Token（建议通过命令 'GitLab: Set Access Token' 安全保存至 VS Code SecretStorage）"
+          "description": "GitLab Personal Access Token（需要 api 读写权限，可直接在此输入并保存）",
+          "order": 1
         },
-        "gitlabMr.defaultTargetBranch": {
+        "gitlabMr.instanceUrl": {
           "type": "string",
-          "default": "master",
-          "description": "默认目标合并分支（如 master, main 或 dev）"
-        },
-        "gitlabMr.titleTemplate": {
-          "type": "string",
-          "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",
-          "description": "MR Title 生成模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey}"
+          "default": "https://gitlab.com",
+          "markdownDescription": "**GitLab Server Address**：填写 GitLab 地址，例如 `https://gitlab.company.com`。不要填写 `/api/v4`。使用 GitLab.com 时保持默认值；私有实例请填写实际域名。",
+          "order": 2
         },
         "gitlabMr.defaultReviewers": {
           "type": "array",
@@ -57,24 +94,82 @@
             "type": "string"
           },
           "default": [],
-          "description": "默认指定 Reviewer 的 GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]）"
+          "description": "默认指定 Reviewer 的 GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]，无需加 @）",
+          "order": 3
+        },
+        "gitlabMr.defaultTargetBranch": {
+          "type": "string",
+          "default": "master",
+          "description": "默认目标合并分支（如 master, main, dev 或 release）",
+          "order": 4
+        },
+        "gitlabMr.titleTemplate": {
+          "type": "string",
+          "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",
+          "description": "未命中内置规范时的兜底 MR Title 模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey}",
+          "order": 5
         },
         "gitlabMr.removeSourceBranch": {
           "type": "boolean",
           "default": true,
-          "description": "合并后是否自动删除源分支"
+          "description": "创建 MR 时是否默认勾选【合并后删除源分支】",
+          "order": 6
         },
         "gitlabMr.squash": {
           "type": "boolean",
           "default": false,
-          "description": "是否开启 Squash commits"
+          "description": "创建 MR 时是否默认勾选【Squash commits】",
+          "order": 7
         },
         "gitlabMr.autoOpenInBrowser": {
           "type": "boolean",
           "default": true,
-          "description": "MR 创建成功后是否自动在浏览器中打开"
+          "description": "MR 创建成功后是否自动在浏览器中打开对应页面",
+          "order": 8
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "gitlabMr.releaseReadiness",
+          "name": "上线检查"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "gitlabMr.releaseReadiness",
+        "contents": "选择上线分支以查看对应 feature 的 MR 状态。\n[选择 release 分支](command:gitlabMr.checkReleaseReadiness)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation",
+          "icon": "$(git-branch)"
+        },
+        {
+          "command": "gitlabMr.refreshReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation",
+          "icon": "$(refresh)"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gitlabMr.createReleaseFeatureMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && (viewItem == releaseFeature-not-created || viewItem == releaseFeature-closed)",
+          "group": "inline"
+        },
+        {
+          "command": "gitlabMr.openReleaseMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && (viewItem == releaseFeature-open || viewItem == releaseFeature-merged || viewItem == releaseFeature-closed)",
+          "group": "inline"
+        }
+      ]
     }
   },
   "scripts": {

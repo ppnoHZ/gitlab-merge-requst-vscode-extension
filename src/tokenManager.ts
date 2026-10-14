@@ -6,28 +6,31 @@ export class TokenManager {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   /**
-   * 获取 Access Token：优先从 SecretStorage 获取，其次从配置项获取
+   * 获取 Access Token：优先从 VS Code 设置项获取，其次从 SecretStorage 获取
    */
   async getToken(): Promise<string | undefined> {
-    const secretToken = await this.context.secrets.get(TokenManager.SECRET_KEY);
-    if (secretToken && secretToken.trim()) {
-      return secretToken.trim();
-    }
-
     const config = vscode.workspace.getConfiguration('gitlabMr');
     const configToken = config.get<string>('accessToken');
     if (configToken && configToken.trim()) {
       return configToken.trim();
     }
 
+    const secretToken = await this.context.secrets.get(TokenManager.SECRET_KEY);
+    if (secretToken && secretToken.trim()) {
+      return secretToken.trim();
+    }
+
     return undefined;
   }
 
   /**
-   * 将 Access Token 安全保存至 SecretStorage
+   * 将 Access Token 同时保存至 SecretStorage 与 VS Code 用户设置
    */
   async setToken(token: string): Promise<void> {
-    await this.context.secrets.store(TokenManager.SECRET_KEY, token.trim());
+    const trimmed = token.trim();
+    await this.context.secrets.store(TokenManager.SECRET_KEY, trimmed);
+    const config = vscode.workspace.getConfiguration('gitlabMr');
+    await config.update('accessToken', trimmed, vscode.ConfigurationTarget.Global);
   }
 
   /**

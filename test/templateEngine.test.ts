@@ -1,5 +1,6 @@
 import { TemplateEngine } from '../src/templateEngine';
 import { GitCommitInfo } from '../src/types';
+import { getFeatureVersion, getReleaseFeatureStatuses, getReleaseVersion } from '../src/releaseReadiness';
 
 function runTests() {
   const dummyCommit: GitCommitInfo = {
@@ -123,3 +124,59 @@ function runTests() {
 }
 
 runTests();
+
+function runReleaseReadinessTests() {
+  assert.equal(getReleaseVersion('release/2.8.0/hotfix'), '2.8.0');
+  assert.equal(getFeatureVersion('feature/2.8.0/login'), '2.8.0');
+  assert.equal(getFeatureVersion('feature/2.8.01/login'), '2.8.01');
+  assert.equal(getReleaseVersion('release'), undefined);
+
+  const statuses = getReleaseFeatureStatuses(
+    'release/2.8.0',
+    ['feature/2.8.0/login', 'feature/2.8.0/api', 'feature/2.8.01/other'],
+    [
+      {
+        source_branch: 'feature/2.8.0/login',
+        target_branch: 'release/2.8.0',
+        state: 'merged',
+        iid: 1,
+        title: 'Merged login feature',
+        web_url: 'https://gitlab.example/mr/1'
+      },
+      {
+        source_branch: 'feature/2.8.0/deleted-after-merge',
+        target_branch: 'release/2.8.0',
+        state: 'merged',
+        iid: 2,
+        title: 'Merged deleted feature',
+        web_url: 'https://gitlab.example/mr/2'
+      },
+      {
+        source_branch: 'feature/2.8.0/api',
+        target_branch: 'release/2.8.0',
+        state: 'opened',
+        iid: 3,
+        title: 'Open api feature',
+        web_url: 'https://gitlab.example/mr/3'
+      },
+      {
+        source_branch: 'feature/2.8.0/wrong-target',
+        target_branch: 'main',
+        state: 'merged',
+        iid: 4,
+        title: 'Merged to main only',
+        web_url: 'https://gitlab.example/mr/4'
+      }
+    ]
+  );
+
+  assert.deepEqual(statuses.map(status => [status.branch, status.state]), [
+    ['feature/2.8.0/api', 'open'],
+    ['feature/2.8.0/deleted-after-merge', 'merged'],
+    ['feature/2.8.0/login', 'merged']
+  ]);
+  console.log('[PASS] 上线检查：版本第二段精确匹配、目标分支过滤、历史 MR 汇总');
+}
+
+import assert from 'assert';
+runReleaseReadinessTests();

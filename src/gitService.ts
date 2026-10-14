@@ -2,15 +2,19 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { GitCommitInfo, GitRepoInfo } from './types';
+import { Logger } from './logger';
 
 export class GitService {
   constructor(private readonly workspaceRoot: string) {}
 
   private runGit(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
+      Logger.info(`[执行 Git 命令] git ${args.join(' ')} (cwd: ${this.workspaceRoot})`);
       execFile('git', args, { cwd: this.workspaceRoot }, (error, stdout, stderr) => {
         if (error) {
-          return reject(new Error(stderr.trim() || error.message));
+          const errMsg = stderr.trim() || error.message;
+          Logger.warn(`[Git 命令返回异常] git ${args.join(' ')}: ${errMsg}`);
+          return reject(new Error(errMsg));
         }
         resolve(stdout.trim());
       });
@@ -56,6 +60,16 @@ export class GitService {
     } catch {
       return ['master', 'main'];
     }
+  }
+
+  async getBranches(): Promise<string[]> {
+    const output = await this.runGit(['branch', '--all', '--format=%(refname:short)']);
+    return Array.from(new Set(
+      output
+        .split('\n')
+        .map(branch => branch.trim().replace(/^origin\//, ''))
+        .filter(branch => branch && branch !== 'HEAD')
+    ));
   }
 
   /**
@@ -137,24 +151,31 @@ export class GitService {
     };
   }
 
+  private async resolveBranchRef(branch: string): Promise<string> {
+    for (const ref of [branch, `origin/${branch}`]) {
+      try {
+        await this.runGit(['rev-parse', '--verify', ref]);
+        return ref;
+      } catch {
+        // Try the next local/remote reference.
+      }
+    }
+    throw new Error(`找不到分支引用: ${branch}`);
+  }
+
   /**
    * 获取 sourceBranch 相对于 targetBranch 的 Commits 历史
    */
   async getCommitsBetween(sourceBranch: string, targetBranch: string): Promise<GitCommitInfo[]> {
     try {
-      // 优先与 origin/targetBranch 对比，如果没有则与本地 targetBranch 对比
-      let baseRef = `origin/${targetBranch}`;
-      try {
-        await this.runGit(['rev-parse', '--verify', baseRef]);
-      } catch {
-        baseRef = targetBranch;
-      }
+      const sourceRef = await this.resolveBranchRef(sourceBranch);
+      const targetRef = await this.resolveBranchRef(targetBranch);
 
       // 获取格式化 commits: %H|%h|%s|%an|%ad
       const format = '%H|%h|%s|%an|%ad';
       const output = await this.runGit([
         'log',
-        `${baseRef}..${sourceBranch}`,
+        `${targetRef}..${sourceRef}`,
         `--pretty=format:${format}`,
         '--date=short',
         '--no-merges'
@@ -186,26 +207,9 @@ export class GitService {
           date: date || ''
         };
       });
-    } catch (e: any) {
-      // 如果对比失败，回退到当前分支的最近 5 条 commit
-      try {
-        const output = await this.runGit([
-          'log',
-          '-5',
-          '--pretty=format:%H|%h|%s|%an|%ad',
-          '--date=short',
-          '--no-merges'
-        ]);
-        return output
-          .split('\n')
-          .filter(Boolean)
-          .map(line => {
-            const [hash, shortHash, title, author, date] = line.split('|');
-            return { hash, shortHash, title, author, date };
-          });
-      } catch {
-        return [];
-      }
+    } catch (error) {
+      Logger.warn(`无法获取 ${sourceBranch} 相对 ${targetBranch} 的提交记录`, error);
+      return [];
     }
   }
 
@@ -214,13 +218,9 @@ export class GitService {
    */
   async getChangedFiles(sourceBranch: string, targetBranch: string): Promise<string[]> {
     try {
-      let baseRef = `origin/${targetBranch}`;
-      try {
-        await this.runGit(['rev-parse', '--verify', baseRef]);
-      } catch {
-        baseRef = targetBranch;
-      }
-      const output = await this.runGit(['diff', '--name-status', `${baseRef}...${sourceBranch}`]);
+      const sourceRef = await this.resolveBranchRef(sourceBranch);
+      const targetRef = await this.resolveBranchRef(targetBranch);
+      const output = await this.runGit(['diff', '--name-status', `${targetRef}...${sourceRef}`]);
       return output.split('\n').filter(Boolean);
     } catch {
       return [];

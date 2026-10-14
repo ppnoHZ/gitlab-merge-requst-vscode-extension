@@ -2,6 +2,8 @@ import * as https from 'https';
 import * as http from 'http';
 import { URL } from 'url';
 import { GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
+import { Logger } from './logger';
+import { ReleaseMergeRequest } from './releaseReadiness';
 
 export class GitLabService {
   private readonly baseUrl: string;
@@ -12,6 +14,7 @@ export class GitLabService {
     const sanitized = instanceUrl.replace(/\/+$/, '');
     this.baseUrl = `${sanitized}/api/v4`;
     this.token = token;
+    Logger.info(`GitLabService 初始化完成，API Endpoint: ${this.baseUrl}`);
   }
 
   /**
@@ -22,6 +25,12 @@ export class GitLabService {
     const urlObj = new URL(fullUrl);
     const isHttps = urlObj.protocol === 'https:';
     const httpModule = isHttps ? https : http;
+    const method = options.method || 'GET';
+
+    Logger.info(`[GitLab API 发送] ${method} ${fullUrl}`);
+    if (options.body) {
+      Logger.info(`[GitLab API 请求参数]`, options.body);
+    }
 
     const postData = options.body ? JSON.stringify(options.body) : undefined;
 
@@ -30,7 +39,7 @@ export class GitLabService {
       hostname: urlObj.hostname,
       port: urlObj.port || (isHttps ? 443 : 80),
       path: `${urlObj.pathname}${urlObj.search}`,
-      method: options.method || 'GET',
+      method,
       headers: {
         'PRIVATE-TOKEN': this.token,
         'Content-Type': 'application/json',
@@ -56,6 +65,7 @@ export class GitLabService {
         res.on('end', () => {
           const status = res.statusCode || 0;
           if (status >= 200 && status < 300) {
+            Logger.info(`[GitLab API 成功 ${status}] ${method} ${path}`);
             try {
               const data = responseBody ? JSON.parse(responseBody) : {};
               resolve(data as T);
@@ -74,12 +84,14 @@ export class GitLabService {
             } catch {
               errorMsg += `: ${responseBody}`;
             }
+            Logger.error(`[GitLab API 失败 ${status}] ${method} ${path}\n响应体: ${responseBody}`);
             reject(new Error(errorMsg));
           }
         });
       });
 
       req.on('error', err => {
+        Logger.error(`[GitLab 网络错误] 无法连接到 ${fullUrl}`, err);
         reject(new Error(`连接 GitLab 失败: ${err.message}`));
       });
 
@@ -103,6 +115,42 @@ export class GitLabService {
   async getProject(projectPath: string): Promise<{ id: number; name: string; web_url: string }> {
     const encoded = encodeURIComponent(projectPath);
     return this.request<{ id: number; name: string; web_url: string }>(`/projects/${encoded}`);
+  }
+
+  private async getAllPages<T>(path: string): Promise<T[]> {
+    const results: T[] = [];
+    for (let page = 1; ; page++) {
+      const separator = path.includes('?') ? '&' : '?';
+      const pageResults = await this.request<T[]>(`${path}${separator}per_page=100&page=${page}`);
+      results.push(...pageResults);
+      if (pageResults.length < 100) {
+        return results;
+      }
+    }
+  }
+
+  async getProjectBranches(projectId: string | number): Promise<string[]> {
+    const encodedId = encodeURIComponent(String(projectId));
+    const branches = await this.getAllPages<{ name: string }>(
+      `/projects/${encodedId}/repository/branches`
+    );
+    return branches.map(branch => branch.name);
+  }
+
+  async getMergeRequestsTargetingBranch(
+    projectId: string | number,
+    targetBranch: string
+  ): Promise<ReleaseMergeRequest[]> {
+    const encodedId = encodeURIComponent(String(projectId));
+    const query = new URLSearchParams({
+      state: 'all',
+      target_branch: targetBranch,
+      order_by: 'updated_at',
+      sort: 'desc'
+    }).toString();
+    return this.getAllPages<ReleaseMergeRequest>(
+      `/projects/${encodedId}/merge_requests?${query}`
+    );
   }
 
   /**
