@@ -1,0 +1,94 @@
+{
+  "name": "gitlab-auto-mr",
+  "displayName": "GitLab Auto Merge Request",
+  "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitlabMr.createMergeRequest",
+        "title": "GitLab: Create Merge Request",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.setToken",
+        "title": "GitLab: Set Access Token",
+        "category": "GitLab MR"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "GitLab Auto MR",
+      "properties": {
+        "gitlabMr.instanceUrl": {
+          "type": "string",
+          "default": "https://gitlab.com",
+          "description": "GitLab 实例地址，私有部署如 https://gitlab.yourcompany.com（末尾无需斜杠）"
+        },
+        "gitlabMr.accessToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitLab Personal Access Token（建议通过命令 'GitLab: Set Access Token' 安全保存至 VS Code SecretStorage）"
+        },
+        "gitlabMr.defaultTargetBranch": {
+          "type": "string",
+          "default": "master",
+          "description": "默认目标合并分支（如 master, main 或 dev）"
+        },
+        "gitlabMr.titleTemplate": {
+          "type": "string",
+          "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",
+          "description": "MR Title 生成模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey}"
+        },
+        "gitlabMr.defaultReviewers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "默认指定 Reviewer 的 GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]）"
+        },
+        "gitlabMr.removeSourceBranch": {
+          "type": "boolean",
+          "default": true,
+          "description": "合并后是否自动删除源分支"
+        },
+        "gitlabMr.squash": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否开启 Squash commits"
+        },
+        "gitlabMr.autoOpenInBrowser": {
+          "type": "boolean",
+          "default": true,
+          "description": "MR 创建成功后是否自动在浏览器中打开"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}
