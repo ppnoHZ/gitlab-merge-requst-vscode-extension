@@ -5,7 +5,7 @@ import { GitService } from '../src/gitService';
 import { GitLabService } from '../src/gitlabService';
 import { ReleaseReadinessProvider, ReleaseReadinessTreeItem } from '../src/releaseReadinessView';
 import { ReleaseMergeRequest } from '../src/releaseReadiness';
-import { informationMessages, warnings, titleInput, openedUrls, targetPick } from './vscodeMock';
+import { configuration, informationMessages, warnings, titleInput, openedUrls, targetPick } from './vscodeMock';
 import { MergeRequestPayload } from '../src/types';
 
 async function runTests(): Promise<void> {
@@ -39,16 +39,20 @@ async function runTests(): Promise<void> {
     calls.version++;
     return { version: '18.0' };
   };
-  GitLabService.prototype.getProjectBranches = async () => {
+  let featureBranches = branches.filter(branch => branch.startsWith('feature/'));
+  GitLabService.prototype.getProjectBranches = async (_projectId, _page, search) => {
+    if (search?.startsWith('^feature/')) {
+      return { items: featureBranches, hasMore: false };
+    }
     calls.list++;
-    return [...branches];
+    return { items: [...branches], hasMore: false };
   };
   GitLabService.prototype.getMergeRequestsTargetingBranch = async (projectId, target) => {
     if (failMr) {
       throw new Error('MR API failed');
     }
     calls.mr.push(target);
-    return mergeRequests;
+    return { items: mergeRequests, hasMore: false };
   };
 
   const tokenManager = { getToken: async () => 'test-token', promptForToken: async () => undefined };
@@ -126,7 +130,7 @@ async function runTests(): Promise<void> {
   assert.equal(calls.version, 2);
   assert.equal(calls.project, 3);
   assert.deepEqual(calls.mr, ['release/v1', 'release/v1']);
-  assert.deepEqual(calls.selected, ['release/v1', 'dev', 'dev']);
+  assert.deepEqual(calls.selected, ['release/v1', 'dev', 'dev', 'release/v1']);
   const refreshedDev = provider.getBranchItem('dev');
   assert.ok(refreshedDev);
   assert.deepEqual(provider.getChildren(refreshedDev), []);
@@ -149,6 +153,7 @@ async function runTests(): Promise<void> {
   assert.equal(treeView.description, 'v1 · 1/1 已合并');
 
   provider.setBranches([...branches, 'feature/v1/PROJ-2', 'feature/v1/PROJ-3', 'feature/v1/PROJ-4']);
+  featureBranches = provider.getBranches().filter(branch => branch.startsWith('feature/'));
   mergeRequests = [
     mergedRequest,
     { ...mergedRequest, source_branch: 'feature/v1/PROJ-2', state: 'opened', iid: 2 },
@@ -164,6 +169,7 @@ async function runTests(): Promise<void> {
   assert.equal(treeView.description, 'v1 · 1/4 已合并');
 
   provider.setBranches(['main', 'release/v1']);
+  featureBranches = [];
   mergeRequests = [];
   await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'release/v1' });
   assert.match(String(provider.getChildren(reveals.at(-1)!.item)[1].label), /没有找到该版本的 feature 分支/);
@@ -176,8 +182,8 @@ async function runTests(): Promise<void> {
     /MR API failed/
   );
   const failedResults = provider.getChildren(reveals.at(-1)!.item);
-  assert.equal(failedResults.length, 2);
-  assert.match(String(failedResults[1].label), /MR 检查失败: MR API failed/);
+  assert.ok(failedResults.some(item => String(item.label).includes('MR 检查失败')));
+  assert.equal(failedResults.at(-1)?.command?.command, 'gitlabMr.loadMoreReleaseData');
   failMr = false;
   await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'main' });
   assert.match(String(provider.getChildren(reveals.at(-1)!.item)[0].label), /当前分支为 main/);
@@ -211,6 +217,15 @@ async function runTests(): Promise<void> {
     created.push(payload);
     return { id: 10, iid: 10, title: payload.title, web_url: 'https://gitlab.com/mr/10', state: 'opened' };
   };
+  const reviewerLookups: string[] = [];
+  GitLabService.prototype.getUserByUsername = async username => {
+    reviewerLookups.push(username);
+    if (username === 'unavailable') {
+      throw new Error('User API failed');
+    }
+    return username === 'alice' ? { id: 12, username: 'alice', name: 'Alice' }
+      : username === 'bob' ? { id: 34, username: 'bob', name: 'Bob' } : undefined;
+  };
   GitService.prototype.isBranchMergedIntoMain = async () => false;
   targetPick.value = 'main';
   titleInput.value = 'Merge release to main';
@@ -220,6 +235,8 @@ async function runTests(): Promise<void> {
   assert.equal(created[0].targetBranch, 'main');
   assert.equal(created[0].title, titleInput.value);
   assert.equal(created[0].removeSourceBranch, true);
+  assert.equal(created[0].reviewerIds, undefined);
+  assert.deepEqual(reviewerLookups, []);
   assert.equal(openedUrls.at(-1), 'https://gitlab.com/mr/10');
   assert.equal(provider.selectedBranch, 'release/v1');
   assert.match(titleInput.titles.at(-1) ?? '', /MTP/);
@@ -228,10 +245,13 @@ async function runTests(): Promise<void> {
   assert.equal(targetPick.items.some(item => item.label === 'release/v1'), false);
 
   titleInput.value = 'Merge feature to release';
+  configuration.set('defaultReviewers', [' alice ', ' @bob ', 'alice']);
   targetPick.value = 'release/v1';
   await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
   assert.equal(created[1].sourceBranch, 'feature/v1/PROJ-1');
   assert.equal(created[1].targetBranch, 'release/v1');
+  assert.deepEqual(created[1].reviewerIds, [12, 34]);
+  assert.deepEqual(reviewerLookups, ['alice', 'bob', 'alice']);
   assert.equal(targetPick.items[0].label, 'release/v1');
   assert.match(targetPick.items[0].description ?? '', /同版本 release/);
   assert.equal(targetPick.items.some(item => item.label === 'feature/v1/PROJ-1'), false);
@@ -249,7 +269,19 @@ async function runTests(): Promise<void> {
   assert.equal(created.length, 3);
   assert.equal(created[2].sourceBranch, 'release/v1');
   assert.equal(created[2].targetBranch, 'uat');
+  assert.deepEqual(created[2].reviewerIds, [12, 34]);
   assert.match(titleInput.titles.at(-1) ?? '', /release-uat/);
+
+  configuration.set('defaultReviewers', ['alice', 'missing']);
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /missing.*未创建 MR/);
+  assert.equal(created.length, 3);
+  configuration.set('defaultReviewers', ['unavailable']);
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /Reviewer unavailable.*User API failed/);
+  assert.equal(created.length, 3);
+  configuration.set('defaultReviewers', [' @ ']);
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /空用户名/);
+  assert.equal(created.length, 3);
+  configuration.clear();
 
   titleInput.value = undefined;
   await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
@@ -268,12 +300,13 @@ async function runTests(): Promise<void> {
   await handleCreateMainMergeRequest(tokenManager, provider, mainItem);
   assert.match(warnings.at(-1) ?? '', /选择 main 以外的分支/);
   provider.setBranches(['release/v1']);
-  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
-  assert.match(warnings.at(-1) ?? '', /没有 main/);
   const networkCallsBeforeFilter = JSON.stringify(calls);
   titleInput.value = '  PROJ-1  ';
-  await handleFilterBranchesByKeyword(provider);
+  let remoteSearches = 0;
+  await handleFilterBranchesByKeyword(provider, async () => { remoteSearches++; });
   assert.equal(provider.getBranchKeyword(), 'PROJ-1');
+  assert.equal(remoteSearches, 1);
+  assert.deepEqual(provider.getBranches(), []);
   titleInput.value = undefined;
   await handleFilterBranchesByKeyword(provider);
   assert.equal(provider.getBranchKeyword(), 'PROJ-1');

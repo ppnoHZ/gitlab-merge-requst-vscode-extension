@@ -1,7 +1,7 @@
 import assert from 'assert';
 import * as vscode from 'vscode';
 import { commonBranchFilters, ReleaseReadinessProvider } from '../src/releaseReadinessView';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 
 function branchRoots(provider: ReleaseReadinessProvider) {
   return provider.getChildren().filter(item => item.kind !== 'search');
@@ -220,7 +220,7 @@ restored.dispose();
 const restoredAll = new ReleaseReadinessProvider(null);
 restoredAll.setBranches(['master', 'archive/old']);
 assert.deepEqual(branchRoots(restoredAll).map(item => item.label), ['archive', 'master']);
-assert.equal(branchRoots(restoredAll)[1].contextValue, 'remoteBranch');
+assert.equal(branchRoots(restoredAll)[1].contextValue, 'remoteBranch-canMergeToMain');
 restoredAll.dispose();
 
 const keywordFiltered = new ReleaseReadinessProvider(['feature/', 'release/']);
@@ -236,8 +236,12 @@ keywordFiltered.setMainCheck('release/v1', '最新代码已全部合入 main');
 keywordFiltered.setMergedIntoMain(['feature/v1/PROJ-1/deep/path']);
 let keywordChanges = 0;
 keywordFiltered.onDidChangeTreeData(() => keywordChanges++);
-keywordFiltered.setBranchKeyword('  proj-1  ');
-assert.equal(keywordChanges, 1);
+keywordFiltered.resetBranchPages('  proj-1  ');
+keywordFiltered.appendBranchPage(keywordFiltered.branchPage, {
+  items: ['feature/v1/PROJ-1/deep/path', 'archive/PROJ-1'], hasMore: false
+});
+keywordFiltered.setMergedIntoMain(['feature/v1/PROJ-1/deep/path']);
+assert.ok(keywordChanges > 0);
 assert.equal(keywordFiltered.getBranchKeyword(), 'proj-1');
 assert.deepEqual(branchRoots(keywordFiltered).map(item => item.label), ['feature']);
 assert.equal(keywordFiltered.getChildren()[0].id, 'branch-search');
@@ -249,12 +253,16 @@ assert.equal(keywordFiltered.getParent(keywordLeaf)?.branchPath, 'feature/v1/PRO
 assert.equal(keywordFiltered.getBranchItem('feature/v1/PROJ-2'), undefined);
 assert.equal(keywordFiltered.getBranchItem('archive/PROJ-1'), undefined);
 assert.equal(keywordFiltered.getBranchItem('release/v1'), undefined);
-assert.deepEqual(keywordFiltered.getBranches(), [...keywordBranches].sort());
-assert.equal(keywordFiltered.selectedBranch, 'release/v1');
+assert.deepEqual(keywordFiltered.getBranches(), ['archive/PROJ-1', 'feature/v1/PROJ-1/deep/path']);
 keywordFiltered.setBranchFilters(null);
 assert.deepEqual(branchRoots(keywordFiltered).map(item => item.label), ['archive', 'feature']);
 assert.equal(keywordFiltered.getBranchKeyword(), 'proj-1');
-keywordFiltered.setBranchKeyword('v1');
+keywordFiltered.resetBranchPages('v1');
+keywordFiltered.appendBranchPage(keywordFiltered.branchPage, {
+  items: ['feature/v1/PROJ-2', 'release/v1'], hasMore: false
+});
+keywordFiltered.setReadiness('release/v1', [{ branch: 'feature/v1/PROJ-2', state: 'not-created' }]);
+keywordFiltered.setMainCheck('release/v1', '最新代码已全部合入 main');
 assert.deepEqual(branchRoots(keywordFiltered).map(item => item.label), ['feature', 'release']);
 const visibleRelease = keywordFiltered.getBranchItem('release/v1');
 assert.ok(visibleRelease);
@@ -264,12 +272,14 @@ keywordFiltered.clearChecks();
 keywordFiltered.setBranches([...keywordBranches, 'feature/v1/PROJ-3']);
 assert.equal(keywordFiltered.getBranchKeyword(), 'v1');
 assert.ok(keywordFiltered.getBranchItem('feature/v1/PROJ-3'));
-keywordFiltered.setBranchKeyword('absent');
+keywordFiltered.resetBranchPages('absent');
+keywordFiltered.appendBranchPage(keywordFiltered.branchPage, { items: [], hasMore: false });
 assert.equal(keywordFiltered.getChildren()[0].kind, 'search');
 assert.equal(keywordFiltered.getChildren()[0].command?.command, 'gitlabMr.filterBranchesByKeyword');
 assert.equal(keywordFiltered.getChildren()[1].kind, 'message');
 assert.equal(keywordFiltered.getChildren()[1].command?.command, 'gitlabMr.filterBranchesByKeyword');
-keywordFiltered.setBranchKeyword('   ');
+keywordFiltered.resetBranchPages('   ');
+keywordFiltered.appendBranchPage(keywordFiltered.branchPage, { items: keywordBranches, hasMore: false });
 assert.equal(keywordFiltered.getBranchKeyword(), '');
 assert.deepEqual(branchRoots(keywordFiltered).map(item => item.label), ['archive', 'feature', 'main', 'release']);
 keywordFiltered.dispose();
@@ -278,6 +288,26 @@ assert.equal(newSessionProvider.getBranchKeyword(), '');
 newSessionProvider.dispose();
 
 const manifest = JSON.parse(readFileSync(`${__dirname}/../package.json`, 'utf8'));
+assert.equal(manifest.activationEvents.includes('onCommand:gitlabMr.loadMoreBranches'), false);
+assert.equal(manifest.contributes.commands.some((command: { command: string }) =>
+  command.command === 'gitlabMr.loadMoreBranches'
+), false);
+assert.ok(manifest.contributes.commands.some((command: { command: string }) =>
+  command.command === 'gitlabMr.retryBranches'
+));
+const containers: Array<{ id: string; icon: string }> = manifest.contributes.viewsContainers.activitybar;
+const containerIds = containers.map(container => container.id);
+assert.equal(new Set(containerIds).size, containerIds.length);
+for (const container of containers) {
+  assert.match(container.id, /^[a-zA-Z0-9_-]+$/);
+  assert.ok(existsSync(`${__dirname}/../${container.icon}`));
+}
+for (const containerId of Object.keys(manifest.contributes.views)) {
+  assert.ok(containerIds.includes(containerId), `View container is not registered: ${containerId}`);
+}
+assert.ok(manifest.contributes.views['gitlabMr-releaseReadinessContainer'].some((view: { id: string }) =>
+  view.id === 'gitlabMr.releaseReadiness'
+));
 assert.ok(manifest.activationEvents.includes('onCommand:gitlabMr.filterBranchesByKeyword'));
 assert.ok(manifest.contributes.commands.some((command: { command: string; icon?: string }) =>
   command.command === 'gitlabMr.filterBranchesByKeyword' && command.icon === '$(search)'

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as https from 'https';
 import { URL } from 'url';
-import { GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
+import { GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
 import { Logger } from './logger';
 import { ReleaseMergeRequest } from './releaseReadiness';
 
@@ -170,37 +170,51 @@ export class GitLabService {
     }
   }
 
-  async getProjectBranches(projectId: string | number): Promise<string[]> {
+  async getProjectBranches(projectId: string | number, page = 1, search = ''): Promise<GitLabPage<string>> {
     const encodedId = encodeURIComponent(String(projectId));
-    const branches = await this.getAllPages<{ name: string }>(
-      `/projects/${encodedId}/repository/branches`
+    const query = new URLSearchParams({ per_page: '100', page: String(page) });
+    if (search) {
+      query.set('search', search);
+    }
+    const branches = await this.request<Array<{ name: string }>>(
+      `/projects/${encodedId}/repository/branches?${query}`
     );
-    return branches.map(branch => branch.name);
+    return { items: branches.map(branch => branch.name), hasMore: branches.length === 100 };
   }
 
   async getMergeRequestsTargetingBranch(
     projectId: string | number,
-    targetBranch: string
-  ): Promise<ReleaseMergeRequest[]> {
+    targetBranch: string,
+    page = 1
+  ): Promise<GitLabPage<ReleaseMergeRequest>> {
     const encodedId = encodeURIComponent(String(projectId));
     const query = new URLSearchParams({
       state: 'all',
       target_branch: targetBranch,
       order_by: 'updated_at',
-      sort: 'desc'
+      sort: 'desc',
+      per_page: '100',
+      page: String(page)
     }).toString();
-    return this.getAllPages<ReleaseMergeRequest>(
+    const requests = await this.request<ReleaseMergeRequest[]>(
       `/projects/${encodedId}/merge_requests?${query}`
     );
+    return { items: requests, hasMore: requests.length === 100 };
   }
 
   /**
    * 根据用户名精确查询用户信息
    */
   async getUserByUsername(username: string): Promise<GitLabUser | undefined> {
-    const trimmed = username.replace(/^@/, '').trim();
+    const trimmed = username.trim().replace(/^@/, '').trim();
     const users = await this.request<GitLabUser[]>(`/users?username=${encodeURIComponent(trimmed)}`);
-    return users.find(u => u.username.toLowerCase() === trimmed.toLowerCase());
+    const match = users.find(u => u.username.toLowerCase() === trimmed.toLowerCase());
+    Logger.info('[Reviewer 账号解析]', {
+      username: trimmed,
+      candidates: users.map(user => ({ id: user.id, username: user.username, state: user.state })),
+      matchedId: match?.id
+    });
+    return match;
   }
 
   /**
@@ -211,17 +225,22 @@ export class GitLabService {
     const notFoundUsers: string[] = [];
 
     for (const name of usernames) {
-      if (!name || !name.trim()) continue;
-      const cleanName = name.replace(/^@/, '').trim();
+      const cleanName = name.trim().replace(/^@/, '').trim();
+      if (!cleanName) {
+        throw new Error('gitlabMr.defaultReviewers 包含空用户名，请使用 GitLab 用户名。');
+      }
       try {
         const user = await this.getUserByUsername(cleanName);
-        if (user && user.id) {
-          resolvedIds.push(user.id);
+        if (user && Number.isSafeInteger(user.id) && user.id > 0) {
+          if (!resolvedIds.includes(user.id)) {
+            resolvedIds.push(user.id);
+          }
         } else {
           notFoundUsers.push(cleanName);
         }
-      } catch {
-        notFoundUsers.push(cleanName);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`查询 Reviewer ${cleanName} 失败: ${message}`);
       }
     }
 
@@ -249,9 +268,22 @@ export class GitLabService {
       body.reviewer_ids = payload.reviewerIds;
     }
 
-    return this.request<MergeRequestResult>(`/projects/${projectIdEncoded}/merge_requests`, {
+    Logger.info('[Reviewer 创建请求]', {
+      projectId: payload.projectId,
+      sourceBranch: payload.sourceBranch,
+      targetBranch: payload.targetBranch,
+      reviewer_ids: payload.reviewerIds ?? []
+    });
+    const mr = await this.request<MergeRequestResult>(`/projects/${projectIdEncoded}/merge_requests`, {
       method: 'POST',
       body
     });
+    Logger.info('[Reviewer 创建响应]', {
+      iid: mr.iid,
+      web_url: mr.web_url,
+      reviewersFieldPresent: Array.isArray(mr.reviewers),
+      reviewers: mr.reviewers?.map(user => ({ id: user.id, username: user.username, state: user.state }))
+    });
+    return mr;
   }
 }

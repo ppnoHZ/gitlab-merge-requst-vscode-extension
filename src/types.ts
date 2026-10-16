@@ -39,6 +39,7 @@ export interface MergeRequestResult {
   title: string;
   web_url: string;
   state: string;
+  reviewers?: GitLabUser[];
 }
 
 export interface ExtensionConfig {
@@ -50,4 +51,8 @@ export interface ExtensionConfig {
   removeSourceBranch: boolean;
   squash: boolean;
   autoOpenInBrowser: boolean;
+}
+export interface GitLabPage<T> {
+  items: T[];
+  hasMore: boolean;
 }

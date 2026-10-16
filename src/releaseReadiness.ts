@@ -14,6 +14,7 @@ export interface ReleaseFeatureStatus {
   branch: string;
   state: ReleaseFeatureState;
   mergeRequest?: ReleaseMergeRequest;
+  pending?: boolean;
 }
 
 export function getReleaseVersion(branchName: string): string | undefined {

@@ -33,10 +33,12 @@ export class EventEmitter<T> {
   }
 }
 
+export const configuration = new Map<string, unknown>();
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
   getConfiguration: () => ({
-    get: <T>(key: string, fallback: T): T => fallback
+    get: <T>(key: string, fallback: T): T => configuration.has(key) ? configuration.get(key) as T : fallback,
+    inspect: (key: string) => ({ globalValue: configuration.get(key) })
   })
 };
 

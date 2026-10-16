@@ -1,9 +1,24 @@
 import * as vscode from 'vscode';
-import { ReleaseFeatureState, ReleaseFeatureStatus } from './releaseReadiness';
+import { getReleaseFeatureStatuses, ReleaseFeatureState, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
+import { GitLabPage } from './types';
 import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
 import { Logger } from './logger';
 
-type ReleaseTreeItemKind = 'search' | 'directory' | 'branch' | 'feature' | 'issueLink' | 'message';
+type ReleaseTreeItemKind = 'search' | 'loadMore' | 'directory' | 'branch' | 'feature' | 'issueLink' | 'message';
+
+export interface BranchPageState {
+  page: number;
+  hasMore: boolean;
+  loading: boolean;
+  error?: string;
+}
+
+export interface ReleasePageState extends BranchPageState {
+  branches: string[];
+  requests: ReleaseMergeRequest[];
+  moreBranches: boolean;
+  moreRequests: boolean;
+}
 
 export class ReleaseReadinessTreeItem extends vscode.TreeItem {
   constructor(
@@ -41,6 +56,9 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private mergedIntoMain = new Set<string>();
   private branchFilters: string[] | null;
   private branchKeyword = '';
+  branchPage: BranchPageState = { page: 0, hasMore: true, loading: false };
+  readonly releasePages = new Map<string, ReleasePageState>();
+  readonly checkingBranches = new Map<string, object>();
   private readonly parents = new WeakMap<ReleaseReadinessTreeItem, ReleaseReadinessTreeItem | undefined>();
 
   constructor(branchFilters: string[] | null = commonBranchFilters) {
@@ -60,13 +78,74 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     return this.branchKeyword;
   }
 
-  setBranchKeyword(keyword: string): void {
+  get hasBranches(): boolean {
+    return this.branches.length > 0;
+  }
+
+  resetBranchPages(keyword = this.branchKeyword): void {
     this.branchKeyword = keyword.trim();
+    this.branchPage = { page: 0, hasMore: true, loading: false };
+    this.branches = [];
+    this.mergedIntoMain.clear();
+    this.clearChecks();
+  }
+
+  appendBranchPage(state: BranchPageState, page: GitLabPage<string>): void {
+    if (state !== this.branchPage) {
+      return;
+    }
+    state.page++;
+    state.hasMore = page.hasMore;
+    state.error = undefined;
+    this.setBranches([...this.branches, ...page.items]);
+  }
+
+  startReleasePages(branch: string): ReleasePageState {
+    const state: ReleasePageState = {
+      page: 0, hasMore: true, loading: false, branches: [], requests: [],
+      moreBranches: true, moreRequests: true
+    };
+    this.releasePages.set(branch, state);
+    this.setReadinessMessage(branch, '正在加载 MR 和同版本 feature 分支...');
+    return state;
+  }
+
+  appendReleasePage(branch: string, state: ReleasePageState, branches: GitLabPage<string>, requests: GitLabPage<ReleaseMergeRequest>): void {
+    if (this.releasePages.get(branch) !== state) {
+      return;
+    }
+    state.page++;
+    state.branches = [...new Set([...state.branches, ...branches.items])];
+    state.requests = [...new Map([...state.requests, ...requests.items].map(request => [request.iid, request])).values()];
+    state.moreBranches = branches.hasMore;
+    state.moreRequests = requests.hasMore;
+    state.hasMore = branches.hasMore || requests.hasMore;
+    state.error = undefined;
+    this.setReadiness(branch, getReleaseFeatureStatuses(branch, state.branches, state.requests)
+      .map(status => ({ ...status, pending: state.moreRequests })), false);
+  }
+
+  refresh(): void {
     this.changeEmitter.fire(undefined);
   }
 
-  get hasBranches(): boolean {
-    return this.branches.length > 0;
+  private loadMoreItem(state: BranchPageState, branch: string): ReleaseReadinessTreeItem {
+    const item = new ReleaseReadinessTreeItem(
+      'loadMore',
+      state.loading ? '正在加载...' : state.error ? `加载失败，点击重试: ${state.error}` : '加载更多（每页 100 条）',
+      vscode.TreeItemCollapsibleState.None,
+      undefined, undefined, undefined, branch
+    );
+    item.id = `load-more:${branch}`;
+    item.iconPath = new vscode.ThemeIcon('more');
+    if (!state.loading) {
+      item.command = {
+        command: 'gitlabMr.loadMoreReleaseData',
+        title: '加载更多',
+        arguments: [item]
+      };
+    }
+    return item;
   }
 
   getBranches(): string[] {
@@ -92,7 +171,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private createChildren(parent?: ReleaseReadinessTreeItem): ReleaseReadinessTreeItem[] {
     if (!parent) {
       const items = this.getBranchChildren();
-      if (items.length === 0 && this.hasBranches) {
+      if (items.length === 0 && (this.hasBranches || this.branchPage.page > 0)) {
         const message = new ReleaseReadinessTreeItem(
           'message',
           '没有匹配的分支，点击调整过滤条件',
@@ -104,7 +183,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
         };
         items.push(message);
       }
-      if (this.hasBranches) {
+      if (this.hasBranches || this.branchPage.page > 0 || this.branchKeyword || this.branchPage.error) {
         const search = new ReleaseReadinessTreeItem(
           'search', '搜索分支', vscode.TreeItemCollapsibleState.None
         );
@@ -115,6 +194,18 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
           title: '搜索分支'
         };
         items.unshift(search);
+      }
+      if (this.branchPage.loading || this.branchPage.error) {
+        const loading = new ReleaseReadinessTreeItem(
+          'message',
+          this.branchPage.loading ? '正在加载全部分支...' : `加载分支失败，点击重试: ${this.branchPage.error}`,
+          vscode.TreeItemCollapsibleState.None
+        );
+        loading.id = 'branch-loading';
+        if (!this.branchPage.loading) {
+          loading.command = { command: 'gitlabMr.retryBranches', title: '重试加载分支' };
+        }
+        items.push(loading);
       }
       return items;
     }
@@ -157,16 +248,22 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
       result.push(new ReleaseReadinessTreeItem('message', mainCheck, vscode.TreeItemCollapsibleState.None));
     }
     const check = this.statuses.get(parent.branchPath);
+    const page = this.releasePages.get(parent.branchPath);
     const statuses = typeof check === 'string' ? undefined : check;
     if (typeof check === 'string') {
       result.push(new ReleaseReadinessTreeItem('message', check, vscode.TreeItemCollapsibleState.None));
     }
-    if (statuses?.length === 0) {
+    if (page?.hasMore) {
+      result.push(new ReleaseReadinessTreeItem(
+        'message', '结果尚未完整：feature 或 MR 仍有未加载数据，请加载更多', vscode.TreeItemCollapsibleState.None
+      ));
+    }
+    if (statuses?.length === 0 && !page?.hasMore) {
       result.push(new ReleaseReadinessTreeItem(
         'message', '没有找到该版本的 feature 分支', vscode.TreeItemCollapsibleState.None
       ));
     }
-    return result.concat((statuses ?? [])
+    const features = (statuses ?? [])
       .map(status => {
         const issueLinkConfigs = vscode.workspace
           .getConfiguration('gitlabMr')
@@ -185,14 +282,14 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
         );
         item.id = `release-feature:${parent.branchPath}:${status.branch}`;
         const descriptionParts = [
-          stateInfo[status.state].label,
+          status.pending ? 'MR 状态待确认（分页未完成）' : stateInfo[status.state].label,
           ...issueLinks.map(link => `${link.name}: ${link.id}`),
           status.mergeRequest ? `!${status.mergeRequest.iid} ${status.mergeRequest.title}` : undefined
         ].filter((part): part is string => Boolean(part));
         item.description = descriptionParts.length > 0 ? descriptionParts.join(' · ') : undefined;
-        item.tooltip = `${status.branch} · ${stateInfo[status.state].label}`;
-        item.iconPath = new vscode.ThemeIcon(stateInfo[status.state].icon);
-        item.contextValue = `releaseFeature-${status.state}`;
+        item.tooltip = `${status.branch} · ${status.pending ? 'MR 状态待确认' : stateInfo[status.state].label}`;
+        item.iconPath = new vscode.ThemeIcon(status.pending ? 'question' : stateInfo[status.state].icon);
+        item.contextValue = `releaseFeature-${status.pending ? 'pending' : status.state}`;
 
         if (issueLinks.length > 0) {
           item.tooltip = `${item.tooltip}\n展开查看工单链接`;
@@ -202,7 +299,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
             title: '打开 Merge Request',
             arguments: [item]
           };
-        } else {
+        } else if (!status.pending) {
           item.command = {
             command: 'gitlabMr.createReleaseFeatureMergeRequest',
             title: '创建 Merge Request',
@@ -211,7 +308,12 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
         }
         this.markMergedIntoMain(item, status.branch);
         return item;
-      }));
+      });
+    result.push(...features);
+    if (page && (page.hasMore || page.error || page.loading)) {
+      result.push(this.loadMoreItem(page, parent.branchPath));
+    }
+    return result;
   }
 
   private getBranchChildren(prefix = ''): ReleaseReadinessTreeItem[] {
@@ -224,9 +326,6 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
         continue;
       }
       if (!branch.startsWith(pathPrefix)) {
-        continue;
-      }
-      if (!branch.toLowerCase().includes(this.branchKeyword.toLowerCase())) {
         continue;
       }
       const remainder = branch.slice(pathPrefix.length);
@@ -264,7 +363,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   }
 
   private markMergedIntoMain(item: ReleaseReadinessTreeItem, branch: string): void {
-    if (branch !== 'main' && !this.mergedIntoMain.has(branch) && this.branches.includes('main')) {
+    if (branch !== 'main' && !this.mergedIntoMain.has(branch)) {
       item.contextValue = `${item.contextValue ?? 'remoteBranch'}-canMergeToMain`;
     }
     if (branch === 'main' || !this.mergedIntoMain.has(branch)) {
@@ -312,9 +411,11 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     this.changeEmitter.fire(undefined);
   }
 
-  setReadiness(releaseBranch: string, statuses: ReleaseFeatureStatus[]): void {
-    this.selectedBranch = releaseBranch;
-    this.releaseBranch = releaseBranch;
+  setReadiness(releaseBranch: string, statuses: ReleaseFeatureStatus[], selectBranch = true): void {
+    if (selectBranch) {
+      this.selectedBranch = releaseBranch;
+      this.releaseBranch = releaseBranch;
+    }
     this.statuses.set(releaseBranch, statuses);
     const configurations = vscode.workspace
       .getConfiguration('gitlabMr')
@@ -344,6 +445,8 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   clearChecks(): void {
     this.mainChecks.clear();
     this.statuses.clear();
+    this.releasePages.clear();
+    this.checkingBranches.clear();
     this.releaseBranch = undefined;
     this.changeEmitter.fire(undefined);
   }

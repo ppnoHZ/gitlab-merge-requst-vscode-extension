@@ -21,6 +21,8 @@
     "onCommand:gitlabMr.refreshReleaseReadiness",
     "onCommand:gitlabMr.filterReleaseBranches",
     "onCommand:gitlabMr.filterBranchesByKeyword",
+    "onCommand:gitlabMr.retryBranches",
+    "onCommand:gitlabMr.loadMoreReleaseData",
     "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
     "onCommand:gitlabMr.createMainMergeRequest",
     "onCommand:gitlabMr.openReleaseMergeRequest",
@@ -50,6 +52,16 @@
         "title": "Filter Branches (过滤常用分支)",
         "category": "GitLab MR",
         "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.retryBranches",
+        "title": "Retry Branch Loading (重试加载分支)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.loadMoreReleaseData",
+        "title": "Load More Release Data (加载更多上线检查数据)",
+        "category": "GitLab MR"
       },
       {
         "command": "gitlabMr.filterBranchesByKeyword",
@@ -143,7 +155,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "默认指定 Reviewer 的 GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]，无需加 @）",
+          "description": "所有创建 MR 入口默认指定的 Reviewer GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]，无需加 @）。配置的账号必须全部匹配成功才会提交 MR；空列表不指定 Reviewer。",
           "order": 4
         },
         "gitlabMr.defaultTargetBranch": {
@@ -181,7 +193,7 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "gitlabMr.releaseReadinessContainer",
+          "id": "gitlabMr-releaseReadinessContainer",
           "title": "上线检查",
           "icon": "media/release-readiness.svg",
           "order": 6
@@ -189,7 +201,7 @@
       ]
     },
     "views": {
-      "gitlabMr.releaseReadinessContainer": [
+      "gitlabMr-releaseReadinessContainer": [
         {
           "id": "gitlabMr.releaseReadiness",
           "name": "上线检查"
@@ -204,6 +216,14 @@
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "gitlabMr.retryBranches",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.loadMoreReleaseData",
+          "when": "false"
+        },
         {
           "command": "gitlabMr.createMainMergeRequest",
           "when": "false"
@@ -268,7 +288,7 @@
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js"
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
