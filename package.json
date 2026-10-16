@@ -20,7 +20,9 @@
     "onCommand:gitlabMr.checkReleaseReadiness",
     "onCommand:gitlabMr.refreshReleaseReadiness",
     "onCommand:gitlabMr.filterReleaseBranches",
+    "onCommand:gitlabMr.filterBranchesByKeyword",
     "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
+    "onCommand:gitlabMr.createMainMergeRequest",
     "onCommand:gitlabMr.openReleaseMergeRequest",
     "onView:gitlabMr.releaseReadiness",
     "workspaceContains:.git"
@@ -35,7 +37,8 @@
       {
         "command": "gitlabMr.checkReleaseReadiness",
         "title": "Check Release Readiness (检查上线分支合并状态)",
-        "category": "GitLab MR"
+        "category": "GitLab MR",
+        "icon": "$(checklist)"
       },
       {
         "command": "gitlabMr.refreshReleaseReadiness",
@@ -49,9 +52,21 @@
         "icon": "$(filter)"
       },
       {
+        "command": "gitlabMr.filterBranchesByKeyword",
+        "title": "Filter Branches by Keyword (二次过滤分支)",
+        "category": "GitLab MR",
+        "icon": "$(search)"
+      },
+      {
         "command": "gitlabMr.createReleaseFeatureMergeRequest",
         "title": "Create Feature Merge Request (为该功能分支创建 MR)",
         "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.createMainMergeRequest",
+        "title": "创建 MR（按合并规则推荐目标分支）",
+        "category": "GitLab MR",
+        "icon": "$(git-pull-request)"
       },
       {
         "command": "gitlabMr.openReleaseMergeRequest",
@@ -188,6 +203,12 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "gitlabMr.filterReleaseBranches",
@@ -208,6 +229,26 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
+          "group": "check"
+        },
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
+          "group": "inline"
+        },
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
+          "group": "main"
+        },
         {
           "command": "gitlabMr.createReleaseFeatureMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(not-created|closed)/",

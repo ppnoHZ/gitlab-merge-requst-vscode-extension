@@ -42,11 +42,36 @@ export const workspace = {
 
 export const ProgressLocation = { Notification: 15 };
 export const warnings: string[] = [];
+export const informationMessages: string[] = [];
+export const titleInput = { value: undefined as string | undefined, titles: [] as string[] };
+export const targetPick = {
+  value: undefined as string | undefined,
+  items: [] as Array<{ label: string; description?: string }>
+};
+export const openedUrls: string[] = [];
+export const Uri = { parse: (value: string) => value };
+export const env = {
+  openExternal: async (uri: string) => { openedUrls.push(uri); }
+};
 
 export const window = {
-  withProgress: async <T>(options: unknown, task: () => Promise<T>): Promise<T> => task(),
+  showQuickPick: async (items: Array<{ label: string; description?: string }>) => {
+    targetPick.items = items;
+    return items.find(item => item.label === targetPick.value);
+  },
+  withProgress: async <T>(
+    options: unknown,
+    task: (progress: { report: (value: unknown) => void }) => Promise<T>
+  ): Promise<T> => task({ report: () => {} }),
+  showInputBox: async (options: { value?: string }) => {
+    titleInput.titles.push(options.value ?? '');
+    return titleInput.value;
+  },
   showWarningMessage: (message: string) => { warnings.push(message); },
-  showInformationMessage: async () => undefined,
+  showInformationMessage: async (message: string) => {
+    informationMessages.push(message);
+    return undefined;
+  },
   createOutputChannel: () => ({
     info: () => {},
     warn: () => {},

@@ -6,7 +6,7 @@ import { TokenManager } from './tokenManager';
 import { Logger } from './logger';
 import { getReleaseFeatureStatuses, getReleaseVersion } from './releaseReadiness';
 import { commonBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
-import { ReleaseFeatureStatus } from './releaseReadiness';
+import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -23,14 +23,9 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: releaseProvider,
     showCollapseAll: true
   });
-  const updateFilterIndicator = () => {
-    const filters = releaseProvider.getBranchFilters();
-    releaseTreeView.title = filters === null ? '上线检查' : '上线检查 · 已过滤';
-    releaseTreeView.message = filters === null
-      ? undefined
-      : `分支过滤: ${filters.join('、')}（工具栏漏斗图标可调整）`;
-  };
-  updateFilterIndicator();
+  const filterBranchesByKeywordCmd = vscode.commands.registerCommand('gitlabMr.filterBranchesByKeyword', async () => {
+    await handleFilterBranchesByKeyword(releaseProvider);
+  });
 
   const filterReleaseBranchesCmd = vscode.commands.registerCommand('gitlabMr.filterReleaseBranches', async () => {
     const currentFilters = releaseProvider.getBranchFilters();
@@ -55,7 +50,6 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       await context.workspaceState.update(branchFilterStateKey, filters);
       releaseProvider.setBranchFilters(filters);
-      updateFilterIndicator();
     } catch (error) {
       Logger.error('保存分支过滤条件失败', error);
       vscode.window.showErrorMessage(
@@ -89,7 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
   // 4. 注册创建 Merge Request 命令
   const createMrCmd = vscode.commands.registerCommand('gitlabMr.createMergeRequest', async () => {
     try {
-      await handleCreateMergeRequest(context, tokenManager);
+      await handleCreateMergeRequest(tokenManager);
     } catch (error: any) {
       Logger.error('创建 GitLab Merge Request 过程中发生异常', error);
       vscode.window
@@ -140,22 +134,38 @@ export function activate(context: vscode.ExtensionContext) {
     'gitlabMr.createReleaseFeatureMergeRequest',
     async (input: ReleaseReadinessTreeItem | ReleaseFeatureStatus) => {
       const status = input instanceof ReleaseReadinessTreeItem ? input.status : input;
-      if (!status || !releaseProvider.releaseBranch) {
+      const targetBranch = input instanceof ReleaseReadinessTreeItem ? input.branchPath : releaseProvider.releaseBranch;
+      if (!status || !targetBranch) {
         return;
       }
       try {
-        await handleCreateMergeRequest(context, tokenManager, {
+        await handleCreateMergeRequest(tokenManager, {
           sourceBranch: status.branch,
-          targetBranch: releaseProvider.releaseBranch
+          targetBranch
         });
         await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, {
-          selectedBranch: releaseProvider.releaseBranch,
+          selectedBranch: targetBranch,
           selectBranch: false
         });
       } catch (error: any) {
         Logger.error('从上线检查视图创建 MR 失败', error);
         vscode.window.showErrorMessage(`创建 Merge Request 失败: ${error.message}`, '查看详细日志')
           .then(selection => selection === '查看详细日志' && Logger.show());
+      }
+    }
+  );
+
+  const createMainMrCmd = vscode.commands.registerCommand(
+    'gitlabMr.createMainMergeRequest',
+    async (item?: ReleaseReadinessTreeItem) => {
+      try {
+        await handleCreateMainMergeRequest(tokenManager, releaseProvider, item);
+      } catch (error) {
+        Logger.error('从分支创建 MR 失败', error);
+        vscode.window.showErrorMessage(
+          `创建 Merge Request 失败: ${error instanceof Error ? error.message : String(error)}`,
+          '查看详细日志'
+        ).then(selection => selection === '查看详细日志' && Logger.show());
       }
     }
   );
@@ -196,7 +206,9 @@ export function activate(context: vscode.ExtensionContext) {
     checkReleaseCmd,
     refreshReleaseCmd,
     filterReleaseBranchesCmd,
+    filterBranchesByKeywordCmd,
     createReleaseFeatureCmd,
+    createMainMrCmd,
     openReleaseMrCmd,
     openConfiguredIssueLinkCmd,
     releaseProvider,
@@ -234,10 +246,57 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
+export async function handleFilterBranchesByKeyword(provider: ReleaseReadinessProvider): Promise<void> {
+  const keyword = await vscode.window.showInputBox({
+    title: '二次过滤分支（关键词）',
+    prompt: '在现有分支过滤基础上，按完整分支名包含匹配（不区分大小写）；清空后确认可取消二次过滤',
+    value: provider.getBranchKeyword(),
+    ignoreFocusOut: true
+  });
+  if (keyword !== undefined) {
+    provider.setBranchKeyword(keyword);
+  }
+}
+
+export async function handleCreateMainMergeRequest(
+  tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
+  provider: ReleaseReadinessProvider,
+  item?: ReleaseReadinessTreeItem
+) {
+  const branch = item?.kind === 'branch' ? item.branchPath
+    : item?.kind === 'feature' ? item.status?.branch : undefined;
+  if (!branch || branch === 'main') {
+    vscode.window.showWarningMessage('请在上线检查视图中选择 main 以外的分支。');
+    return;
+  }
+  if (!provider.getBranches().includes('main')) {
+    vscode.window.showWarningMessage('远程分支列表中没有 main，请刷新分支列表后重试。');
+    return;
+  }
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  if (!workspace) {
+    vscode.window.showWarningMessage('请先打开 GitLab 项目的工作区。');
+    return;
+  }
+  const merged = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `正在检查 ${branch} 是否已合入 main...`,
+      cancellable: false
+    },
+    () => new GitService(workspace.uri.fsPath).isBranchMergedIntoMain(branch)
+  );
+  provider.setBranchMergedIntoMain(branch, merged);
+  if (merged) {
+    vscode.window.showInformationMessage(`${branch} 的最新代码已全部合入 main，无需创建 MR。`);
+    return;
+  }
+  await handleCreateMergeRequest(tokenManager, { sourceBranch: branch });
+}
+
 async function handleCreateMergeRequest(
-  context: vscode.ExtensionContext,
-  tokenManager: TokenManager,
-  presetBranches?: { sourceBranch: string; targetBranch: string }
+  tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
+  presetBranches?: { sourceBranch: string; targetBranch?: string }
 ) {
   Logger.info('===== 开始执行创建 Merge Request 流程 =====');
 
@@ -312,7 +371,7 @@ async function handleCreateMergeRequest(
 
   // 5. 选择源分支，默认聚焦当前分支；上线检查可传入固定分支
   let branches: string[] = [];
-  if (!presetBranches) {
+  if (!presetBranches?.targetBranch) {
     branches = await gitService.getBranches();
     if (!branches.includes(currentBranch)) {
       branches.unshift(currentBranch);
@@ -510,7 +569,7 @@ async function selectBranch(
 export async function handleCheckReleaseReadiness(
   tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
   provider: ReleaseReadinessProvider,
-  treeView: Pick<vscode.TreeView<ReleaseReadinessTreeItem>, 'description'>,
+  treeView: Pick<vscode.TreeView<ReleaseReadinessTreeItem>, 'description' | 'reveal'>,
   options: { selectedBranch?: string; selectBranch?: boolean; promptForToken?: boolean; refreshBranches?: boolean } = {}
 ) {
   const workspace = vscode.workspace.workspaceFolders?.[0];
@@ -555,6 +614,7 @@ export async function handleCheckReleaseReadiness(
   const gitlabService = new GitLabService(instanceUrl, token);
   const refreshBranches = options.refreshBranches === true || !provider.hasBranches;
   if (refreshBranches) {
+    provider.clearChecks();
     try {
       const gitlabVersion = await gitlabService.getGitLabVersion();
       Logger.info(`GitLab 实例软件版本: ${gitlabVersion.version}${gitlabVersion.revision ? ` (${gitlabVersion.revision})` : ''}`);
@@ -576,6 +636,7 @@ export async function handleCheckReleaseReadiness(
     }
   ) : provider.getBranches();
   branches.sort();
+  let mainCheckError: string | undefined;
   if (refreshBranches) {
     provider.setMergedIntoMain([]);
     provider.setBranches(branches);
@@ -599,6 +660,7 @@ export async function handleCheckReleaseReadiness(
       );
       provider.setMergedIntoMain(mergedBranches);
     } catch (error) {
+      mainCheckError = error instanceof Error ? error.message : String(error);
       Logger.error('检查远程分支合入 main 状态失败', error);
       vscode.window.showWarningMessage(
         `无法更新 main 合并标记（分支列表仍可使用）: ${error instanceof Error ? error.message : String(error)}`
@@ -625,6 +687,19 @@ export async function handleCheckReleaseReadiness(
     return;
   }
   provider.setBranches(branches, releaseBranch);
+  const revealResults = async () => {
+    const item = provider.getBranchItem(releaseBranch);
+    if (item) {
+      await treeView.reveal(item, { select: true, focus: true, expand: 1 });
+    }
+  };
+  if (refreshBranches) {
+    provider.setMainCheck(releaseBranch, mainCheckError
+      ? `main 合入检查失败: ${mainCheckError}`
+      : releaseBranch === 'main' ? '当前分支为 main，无需检查合入自身'
+      : provider.isMergedIntoMain(releaseBranch)
+        ? '最新代码已全部合入 main' : '尚有代码未合入 main（或存在合并冲突）');
+  }
   if (!refreshBranches) {
     provider.setBranchMergedIntoMain(releaseBranch, false);
     try {
@@ -637,7 +712,11 @@ export async function handleCheckReleaseReadiness(
         () => gitService.isBranchMergedIntoMain(releaseBranch)
       );
       provider.setBranchMergedIntoMain(releaseBranch, merged);
+      provider.setMainCheck(releaseBranch, releaseBranch === 'main'
+        ? '当前分支为 main，无需检查合入自身'
+        : merged ? '最新代码已全部合入 main' : '尚有代码未合入 main（或存在合并冲突）');
     } catch (error) {
+      provider.setMainCheck(releaseBranch, `main 合入检查失败: ${error instanceof Error ? error.message : String(error)}`);
       Logger.error(`检查 ${releaseBranch} 合入 main 状态失败`, error);
       vscode.window.showWarningMessage(
         `无法更新当前分支的 main 合并标记: ${error instanceof Error ? error.message : String(error)}`
@@ -647,20 +726,29 @@ export async function handleCheckReleaseReadiness(
   const version = getReleaseVersion(releaseBranch);
   if (!version) {
     treeView.description = releaseBranch;
+    await revealResults();
     return;
   }
   Logger.info(`选择上线分支: ${releaseBranch}, 版本: ${version}`);
 
-  projectId ??= (await gitlabService.getProject(repoInfo.projectPath)).id;
-  const releaseProjectId = projectId;
-  const mergeRequests = await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: `正在检查 ${version} 对应的 feature 分支...`,
-      cancellable: false
-    },
-    () => gitlabService.getMergeRequestsTargetingBranch(releaseProjectId, releaseBranch)
-  );
+  let mergeRequests: ReleaseMergeRequest[];
+  provider.setReadinessMessage(releaseBranch, '正在检查 feature 分支的 MR 状态...');
+  try {
+    projectId ??= (await gitlabService.getProject(repoInfo.projectPath)).id;
+    const releaseProjectId = projectId;
+    mergeRequests = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `正在检查 ${version} 对应的 feature 分支...`,
+        cancellable: false
+      },
+      () => gitlabService.getMergeRequestsTargetingBranch(releaseProjectId, releaseBranch)
+    );
+  } catch (error) {
+    provider.setReadinessMessage(releaseBranch, `MR 检查失败: ${error instanceof Error ? error.message : String(error)}`);
+    await revealResults();
+    throw error;
+  }
   const statuses = getReleaseFeatureStatuses(releaseBranch, branches, mergeRequests);
   const counts = statuses.reduce((result, item) => {
     result[item.state]++;
@@ -669,8 +757,9 @@ export async function handleCheckReleaseReadiness(
   Logger.info(
     `上线检查完成 ${releaseBranch}: 总计 ${statuses.length}, 已合并 ${counts.merged}, 开放中 ${counts.open}, 已关闭 ${counts.closed}, 未创建 MR ${counts['not-created']}`
   );
-  provider.setReadiness(releaseBranch, statuses);
   treeView.description = `${version} · ${counts.merged}/${statuses.length} 已合并`;
+  provider.setReadiness(releaseBranch, statuses);
+  await revealResults();
 }
 
 export function deactivate() {

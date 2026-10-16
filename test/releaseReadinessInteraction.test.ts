@@ -1,15 +1,20 @@
 import assert from 'assert';
 import * as vscode from 'vscode';
-import { handleCheckReleaseReadiness } from '../src/extension';
+import { handleCheckReleaseReadiness, handleCreateMainMergeRequest, handleFilterBranchesByKeyword } from '../src/extension';
 import { GitService } from '../src/gitService';
 import { GitLabService } from '../src/gitlabService';
-import { ReleaseReadinessProvider } from '../src/releaseReadinessView';
-import { warnings } from './vscodeMock';
+import { ReleaseReadinessProvider, ReleaseReadinessTreeItem } from '../src/releaseReadinessView';
+import { ReleaseMergeRequest } from '../src/releaseReadiness';
+import { informationMessages, warnings, titleInput, openedUrls, targetPick } from './vscodeMock';
+import { MergeRequestPayload } from '../src/types';
 
 async function runTests(): Promise<void> {
   const calls = { list: 0, all: 0, version: 0, project: 0, selected: [] as string[], mr: [] as string[] };
   const branches = ['main', 'feature/v1/PROJ-1', 'release/v1', 'dev'];
   let failSelected = false;
+  let failMr = false;
+  let mergedSelected = true;
+  let mergeRequests: ReleaseMergeRequest[] = [];
   GitService.prototype.getRepoInfo = async () => ({
     rootPath: '/test/workspace', sourceBranch: 'dev',
     remoteUrl: 'https://gitlab.com/group/project.git',
@@ -24,7 +29,7 @@ async function runTests(): Promise<void> {
     if (failSelected) {
       throw new Error('Fetch failed');
     }
-    return branch !== 'main';
+    return mergedSelected && branch !== 'main';
   };
   GitLabService.prototype.getProject = async () => {
     calls.project++;
@@ -39,13 +44,23 @@ async function runTests(): Promise<void> {
     return [...branches];
   };
   GitLabService.prototype.getMergeRequestsTargetingBranch = async (projectId, target) => {
+    if (failMr) {
+      throw new Error('MR API failed');
+    }
     calls.mr.push(target);
-    return [];
+    return mergeRequests;
   };
 
   const tokenManager = { getToken: async () => 'test-token', promptForToken: async () => undefined };
   const provider = new ReleaseReadinessProvider();
-  const treeView: { description?: string } = {};
+  const reveals: Array<{ item: ReleaseReadinessTreeItem; options?: { select?: boolean; focus?: boolean; expand?: boolean | number } }> = [];
+  const treeView = {
+    description: undefined as string | undefined,
+    reveal: async (
+      item: ReleaseReadinessTreeItem,
+      options?: { select?: boolean; focus?: boolean; expand?: boolean | number }
+    ) => { reveals.push({ item, options }); }
+  };
   await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectBranch: false });
   assert.equal(calls.list, 1);
   assert.equal(calls.all, 1);
@@ -61,6 +76,13 @@ async function runTests(): Promise<void> {
   assert.equal(calls.all, 1);
   assert.equal(calls.version, 1);
   assert.equal(provider.releaseBranch, 'release/v1');
+  assert.equal(reveals.length, 1);
+  assert.equal(reveals[0].item.kind, 'branch');
+  assert.equal(reveals[0].item.branchPath, 'release/v1');
+  assert.equal(provider.getParent(reveals[0].item)?.branchPath, 'release');
+  assert.deepEqual(reveals[0].options, { select: true, focus: true, expand: 1 });
+  assert.match(String(provider.getChildren(reveals[0].item)[0].label), /全部合入 main/);
+  assert.equal(provider.getChildren(reveals[0].item)[1].status?.state, 'not-created');
   assert.equal(calls.project, 2);
   const dev = provider.getChildren().find(item => item.branchPath === 'dev');
   assert.deepEqual(dev?.iconPath, new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed')));
@@ -75,9 +97,12 @@ async function runTests(): Promise<void> {
   assert.equal(calls.all, 1);
   assert.equal(calls.project, 2);
 
+  assert.match(String(provider.getChildren(reveals.at(-1)!.item)[0].label), /全部合入 main/);
+  assert.equal(provider.getChildren(reveals[0].item)[1].status?.state, 'not-created');
   failSelected = true;
   await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'dev' });
   assert.match(warnings.at(-1) ?? '', /Fetch failed/);
+  assert.match(String(provider.getChildren(reveals.at(-1)!.item)[0].label), /检查失败: Fetch failed/);
   assert.deepEqual(
     provider.getChildren().find(item => item.branchPath === 'dev')?.iconPath,
     new vscode.ThemeIcon('git-branch')
@@ -102,10 +127,161 @@ async function runTests(): Promise<void> {
   assert.equal(calls.project, 3);
   assert.deepEqual(calls.mr, ['release/v1', 'release/v1']);
   assert.deepEqual(calls.selected, ['release/v1', 'dev', 'dev']);
+  const refreshedDev = provider.getBranchItem('dev');
+  assert.ok(refreshedDev);
+  assert.deepEqual(provider.getChildren(refreshedDev), []);
   assert.deepEqual(provider.getBranches(), [...branches].sort());
   const snapshot = provider.getBranches();
   snapshot.push('invalid');
   assert.equal(provider.getBranches().includes('invalid'), false);
+
+  const mergedRequest: ReleaseMergeRequest = {
+    source_branch: 'feature/v1/PROJ-1', target_branch: 'release/v1',
+    state: 'merged', iid: 1, title: 'Feature merged', web_url: 'https://gitlab.com/group/project/-/merge_requests/1'
+  };
+  mergeRequests = [mergedRequest];
+  const revealsBeforeMerged = reveals.length;
+  await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'release/v1' });
+  assert.equal(reveals.length, revealsBeforeMerged + 1);
+  assert.equal(provider.getChildren(reveals.at(-1)!.item)[1].status?.state, 'merged');
+  assert.equal(provider.releaseBranch, 'release/v1');
+  assert.equal(provider.selectedBranch, 'release/v1');
+  assert.equal(treeView.description, 'v1 · 1/1 已合并');
+
+  provider.setBranches([...branches, 'feature/v1/PROJ-2', 'feature/v1/PROJ-3', 'feature/v1/PROJ-4']);
+  mergeRequests = [
+    mergedRequest,
+    { ...mergedRequest, source_branch: 'feature/v1/PROJ-2', state: 'opened', iid: 2 },
+    { ...mergedRequest, source_branch: 'feature/v1/PROJ-3', state: 'closed', iid: 3 }
+  ];
+  await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'release/v1' });
+  assert.equal(reveals.length, revealsBeforeMerged + 2);
+  const resultRoot = reveals.at(-1)!.item;
+  const resultItems = provider.getChildren(resultRoot);
+  assert.deepEqual(resultItems.slice(1).map(item => item.status?.state), ['merged', 'open', 'closed', 'not-created']);
+  assert.equal(provider.getParent(resultItems[1]), resultRoot);
+  assert.equal(resultItems[1].status?.state, 'merged');
+  assert.equal(treeView.description, 'v1 · 1/4 已合并');
+
+  provider.setBranches(['main', 'release/v1']);
+  mergeRequests = [];
+  await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'release/v1' });
+  assert.match(String(provider.getChildren(reveals.at(-1)!.item)[1].label), /没有找到该版本的 feature 分支/);
+  assert.equal(reveals.length, revealsBeforeMerged + 3);
+  assert.equal(calls.list, 2);
+  assert.equal(calls.all, 2);
+  failMr = true;
+  await assert.rejects(
+    handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'release/v1' }),
+    /MR API failed/
+  );
+  const failedResults = provider.getChildren(reveals.at(-1)!.item);
+  assert.equal(failedResults.length, 2);
+  assert.match(String(failedResults[1].label), /MR 检查失败: MR API failed/);
+  failMr = false;
+  await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'main' });
+  assert.match(String(provider.getChildren(reveals.at(-1)!.item)[0].label), /当前分支为 main/);
+  provider.setBranches([...branches]);
+  mergedSelected = false;
+  await handleCheckReleaseReadiness(tokenManager, provider, treeView, { selectedBranch: 'dev' });
+  assert.match(String(provider.getChildren(reveals.at(-1)!.item)[0].label), /尚有代码未合入 main/);
+  mergedSelected = true;
+  provider.setBranches(['main', 'release/v1', 'feature/v1/PROJ-1']);
+  provider.selectedBranch = 'release/v1';
+  const releaseItem = new ReleaseReadinessTreeItem(
+    'branch', 'v1', vscode.TreeItemCollapsibleState.None,
+    undefined, undefined, undefined, 'release/v1'
+  );
+  const featureItem = new ReleaseReadinessTreeItem(
+    'feature', 'feature/v1/PROJ-1', vscode.TreeItemCollapsibleState.None,
+    { branch: 'feature/v1/PROJ-1', state: 'not-created' }
+  );
+  const created: MergeRequestPayload[] = [];
+  GitService.prototype.isGitRepo = async () => true;
+  GitService.prototype.getBranches = async () => [
+    'main', 'release/v2', 'release/v1', 'feature/v1/PROJ-1', 'dev', 'uat'
+  ];
+  GitService.prototype.getCommitsBetween = async (source, target) => {
+    assert.ok(['release/v1', 'feature/v1/PROJ-1'].includes(source));
+    assert.equal(target, targetPick.value);
+    return [];
+  };
+  GitService.prototype.getChangedFiles = async () => [];
+  GitLabService.prototype.createMergeRequest = async payload => {
+    created.push(payload);
+    return { id: 10, iid: 10, title: payload.title, web_url: 'https://gitlab.com/mr/10', state: 'opened' };
+  };
+  GitService.prototype.isBranchMergedIntoMain = async () => false;
+  targetPick.value = 'main';
+  titleInput.value = 'Merge release to main';
+  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].sourceBranch, 'release/v1');
+  assert.equal(created[0].targetBranch, 'main');
+  assert.equal(created[0].title, titleInput.value);
+  assert.equal(created[0].removeSourceBranch, true);
+  assert.equal(openedUrls.at(-1), 'https://gitlab.com/mr/10');
+  assert.equal(provider.selectedBranch, 'release/v1');
+  assert.match(titleInput.titles.at(-1) ?? '', /MTP/);
+  assert.ok(targetPick.items.find(item => item.label === 'dev')?.description?.includes('推荐'));
+  assert.ok(targetPick.items.find(item => item.label === 'main')?.description?.includes('推荐'));
+  assert.equal(targetPick.items.some(item => item.label === 'release/v1'), false);
+
+  titleInput.value = 'Merge feature to release';
+  targetPick.value = 'release/v1';
+  await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
+  assert.equal(created[1].sourceBranch, 'feature/v1/PROJ-1');
+  assert.equal(created[1].targetBranch, 'release/v1');
+  assert.equal(targetPick.items[0].label, 'release/v1');
+  assert.match(targetPick.items[0].description ?? '', /同版本 release/);
+  assert.equal(targetPick.items.some(item => item.label === 'feature/v1/PROJ-1'), false);
+  assert.match(titleInput.titles.at(-1) ?? '', /feature-release/);
+
+  targetPick.value = undefined;
+  const titleCount = titleInput.titles.length;
+  await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
+  assert.equal(created.length, 2);
+  assert.equal(titleInput.titles.length, titleCount);
+
+  targetPick.value = 'uat';
+  titleInput.value = 'Merge release to uat';
+  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
+  assert.equal(created.length, 3);
+  assert.equal(created[2].sourceBranch, 'release/v1');
+  assert.equal(created[2].targetBranch, 'uat');
+  assert.match(titleInput.titles.at(-1) ?? '', /release-uat/);
+
+  titleInput.value = undefined;
+  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
+  assert.equal(created.length, 3);
+  GitService.prototype.isBranchMergedIntoMain = async () => true;
+  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
+  assert.match(informationMessages.at(-1) ?? '', /无需创建 MR/);
+  assert.equal(created.length, 3);
+
+  GitService.prototype.isBranchMergedIntoMain = async () => { throw new Error('Fetch failed'); };
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /Fetch failed/);
+  assert.equal(created.length, 3);
+  await handleCreateMainMergeRequest(tokenManager, provider);
+  assert.match(warnings.at(-1) ?? '', /选择 main 以外的分支/);
+  const mainItem = provider.getChildren().find(item => item.branchPath === 'main');
+  await handleCreateMainMergeRequest(tokenManager, provider, mainItem);
+  assert.match(warnings.at(-1) ?? '', /选择 main 以外的分支/);
+  provider.setBranches(['release/v1']);
+  await handleCreateMainMergeRequest(tokenManager, provider, releaseItem);
+  assert.match(warnings.at(-1) ?? '', /没有 main/);
+  const networkCallsBeforeFilter = JSON.stringify(calls);
+  titleInput.value = '  PROJ-1  ';
+  await handleFilterBranchesByKeyword(provider);
+  assert.equal(provider.getBranchKeyword(), 'PROJ-1');
+  titleInput.value = undefined;
+  await handleFilterBranchesByKeyword(provider);
+  assert.equal(provider.getBranchKeyword(), 'PROJ-1');
+  assert.equal(titleInput.titles.at(-1), 'PROJ-1');
+  titleInput.value = '';
+  await handleFilterBranchesByKeyword(provider);
+  assert.equal(provider.getBranchKeyword(), '');
+  assert.equal(JSON.stringify(calls), networkCallsBeforeFilter);
   provider.dispose();
   console.log('[PASS] interactions: initial/full refresh, selection checks only current branch, release MR scope, preserved markers and failure handling');
 }
