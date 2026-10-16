@@ -1,6 +1,8 @@
 import { TemplateEngine } from '../src/templateEngine';
 import { GitCommitInfo } from '../src/types';
 import { getFeatureVersion, getReleaseFeatureStatuses, getReleaseVersion } from '../src/releaseReadiness';
+import { resolveFeatureIssueLinks } from '../src/issueLinks';
+import { readFileSync } from 'fs';
 
 function runTests() {
   const dummyCommit: GitCommitInfo = {
@@ -29,6 +31,42 @@ function runTests() {
     },
     {
       name: '规则1兜底: feature -> release (分支与Commit无Jira号)',
+      source: 'feature/user-login',
+      target: 'release',
+      commits: [dummyCommitNoJira],
+      expected: '(feature-release) <Jira号> 优化用户登录流程'
+    },
+    {
+      name: '规则1: 从feature分支第三段读取纯数字Jira ID并覆盖其他来源',
+      source: 'feature/PROJ-100/12345/user-login',
+      target: 'release',
+      commits: [dummyCommit],
+      expected: '(feature-release) 12345 优化用户登录流程'
+    },
+    {
+      name: '自定义标题模板使用feature分支第三段的Jira号',
+      source: 'feature/team/PROJ-432/user-login',
+      target: 'dev',
+      commits: [dummyCommitNoJira],
+      template: 'Jira: ${jiraKey}',
+      expected: 'Jira: PROJ-432'
+    },
+    {
+      name: 'feature第三段支持字母数字项目码与纯数字后缀',
+      source: 'feature/team/AB12-345/login',
+      target: 'release',
+      commits: [dummyCommitNoJira],
+      expected: '(feature-release) AB12-345 优化用户登录流程'
+    },
+    {
+      name: 'feature第三段支持无连字符ITSM编号',
+      source: 'feature/team/ITSMABC123/login',
+      target: 'release',
+      commits: [dummyCommitNoJira],
+      expected: '(feature-release) ITSMABC123 优化用户登录流程'
+    },
+    {
+      name: '规则1: feature分支没有第三段时不填入Jira ID',
       source: 'feature/user-login',
       target: 'release',
       commits: [dummyCommitNoJira],
@@ -108,7 +146,7 @@ function runTests() {
 
   let passed = 0;
   for (const t of tests) {
-    const actual = TemplateEngine.generateTitle(undefined, t.source, t.target, t.commits);
+    const actual = TemplateEngine.generateTitle(t.template, t.source, t.target, t.commits);
     if (actual === t.expected) {
       console.log(`[PASS] ${t.name}: "${actual}"`);
       passed++;
@@ -178,5 +216,59 @@ function runReleaseReadinessTests() {
   console.log('[PASS] 上线检查：版本第二段精确匹配、目标分支过滤、历史 MR 汇总');
 }
 
+function runIssueLinkTests() {
+  const manifest = JSON.parse(readFileSync(`${__dirname}/../package.json`, 'utf8'));
+  const defaultConfigurations = manifest.contributes.configuration.properties['gitlabMr.issueLinks'].default;
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/LI2600031-W1/QES-17012', defaultConfigurations),
+    [{ name: 'Jira', id: 'QES-17012', url: 'https://jira.xpaas.lenovo.com/browse/QES-17012' }]
+  );
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/LI2600031-W1/TAS202610150419', defaultConfigurations),
+    [{ name: 'ITSM', id: 'TAS202610150419', url: 'https://newitsm.lenovo.com/task/detail/TAS202610150419' }]
+  );
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/2.8.0/ITSMABC123/login', defaultConfigurations),
+    [{ name: 'ITSM', id: 'ITSMABC123', url: 'https://newitsm.lenovo.com/task/detail/ITSMABC123' }]
+  );
+  const configurations = [
+    {
+      name: 'Jira',
+      pattern: '^([A-Z][A-Z0-9]*-\\d+)$',
+      urlTemplate: 'https://jira.example.com/browse/{id}'
+    },
+    {
+      name: 'ITSM',
+      pattern: '^(ITSM[A-Z0-9]*\\d[A-Z0-9]*)$',
+      urlTemplate: 'https://itsm.example.com/task/{id}'
+    },
+    {
+      name: 'Change',
+      pattern: '^(CHG\\d+)$',
+      urlTemplate: 'https://changes.example.com/{id}?source=extension'
+    }
+  ];
+
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/2.8.0/AB12-345/login', configurations),
+    [{ name: 'Jira', id: 'AB12-345', url: 'https://jira.example.com/browse/AB12-345' }]
+  );
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/LI2600031-W1/QESFY26-3475', configurations),
+    [{ name: 'Jira', id: 'QESFY26-3475', url: 'https://jira.example.com/browse/QESFY26-3475' }]
+  );
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/2.8.0/ITSMABC123/login', configurations),
+    [{ name: 'ITSM', id: 'ITSMABC123', url: 'https://itsm.example.com/task/ITSMABC123' }]
+  );
+  assert.deepEqual(
+    resolveFeatureIssueLinks('feature/2.8.0/CHG77/login', configurations),
+    [{ name: 'Change', id: 'CHG77', url: 'https://changes.example.com/CHG77?source=extension' }]
+  );
+  assert.deepEqual(resolveFeatureIssueLinks('bugfix/2.8.0/AB12-345/login', configurations), []);
+  console.log('[PASS] 上线检查：正则匹配 Jira、ITSM 和可扩展的额外工单链接');
+}
+
 import assert from 'assert';
 runReleaseReadinessTests();
+runIssueLinkTests();

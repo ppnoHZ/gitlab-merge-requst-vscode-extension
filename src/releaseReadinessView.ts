@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { ReleaseFeatureState, ReleaseFeatureStatus } from './releaseReadiness';
+import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
+import { Logger } from './logger';
 
-type ReleaseTreeItemKind = 'group' | 'feature' | 'message';
+type ReleaseTreeItemKind = 'group' | 'feature' | 'issueLink' | 'message';
 
 export class ReleaseReadinessTreeItem extends vscode.TreeItem {
   constructor(
@@ -9,7 +11,8 @@ export class ReleaseReadinessTreeItem extends vscode.TreeItem {
     label: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
     readonly status?: ReleaseFeatureStatus,
-    readonly groupState?: ReleaseFeatureState
+    readonly groupState?: ReleaseFeatureState,
+    readonly issueLink?: ResolvedIssueLink
   ) {
     super(label, collapsibleState);
   }
@@ -59,6 +62,30 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
       }).filter(item => this.statuses.some(status => status.state === item.groupState));
     }
 
+    if (parent.kind === 'feature' && parent.status) {
+      const configurations = vscode.workspace
+        .getConfiguration('gitlabMr')
+        .get<IssueLinkConfig[]>('issueLinks', []);
+      return resolveFeatureIssueLinks(parent.status.branch, configurations).map(link => {
+        const item = new ReleaseReadinessTreeItem(
+          'issueLink',
+          `${link.name}: ${link.id}`,
+          vscode.TreeItemCollapsibleState.None,
+          parent.status,
+          undefined,
+          link
+        );
+        item.iconPath = new vscode.ThemeIcon('link-external');
+        item.tooltip = link.url;
+        item.command = {
+          command: 'gitlabMr.openConfiguredIssueLink',
+          title: `打开 ${link.name}`,
+          arguments: [link.url]
+        };
+        return item;
+      });
+    }
+
     if (parent.kind !== 'group' || !parent.groupState) {
       return [];
     }
@@ -66,20 +93,30 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     return this.statuses
       .filter(status => status.state === parent.groupState)
       .map(status => {
+        const issueLinkConfigs = vscode.workspace
+          .getConfiguration('gitlabMr')
+          .get<IssueLinkConfig[]>('issueLinks', []);
+        const issueLinks = resolveFeatureIssueLinks(status.branch, issueLinkConfigs);
         const item = new ReleaseReadinessTreeItem(
           'feature',
           status.branch,
-          vscode.TreeItemCollapsibleState.None,
+          issueLinks.length > 0
+            ? vscode.TreeItemCollapsibleState.Collapsed
+            : vscode.TreeItemCollapsibleState.None,
           status
         );
-        item.description = status.mergeRequest
-          ? `!${status.mergeRequest.iid} ${status.mergeRequest.title}`
-          : undefined;
+        const descriptionParts = [
+          ...issueLinks.map(link => `${link.name}: ${link.id}`),
+          status.mergeRequest ? `!${status.mergeRequest.iid} ${status.mergeRequest.title}` : undefined
+        ].filter((part): part is string => Boolean(part));
+        item.description = descriptionParts.length > 0 ? descriptionParts.join(' · ') : undefined;
         item.tooltip = `${status.branch} · ${stateInfo[status.state].label}`;
         item.iconPath = new vscode.ThemeIcon(stateInfo[status.state].icon);
         item.contextValue = `releaseFeature-${status.state}`;
 
-        if (status.mergeRequest) {
+        if (issueLinks.length > 0) {
+          item.tooltip = `${item.tooltip}\n展开查看工单链接`;
+        } else if (status.mergeRequest) {
           item.command = {
             command: 'gitlabMr.openReleaseMergeRequest',
             title: '打开 Merge Request',
@@ -99,6 +136,18 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   setReadiness(releaseBranch: string, statuses: ReleaseFeatureStatus[]): void {
     this.releaseBranch = releaseBranch;
     this.statuses = statuses;
+    const configurations = vscode.workspace
+      .getConfiguration('gitlabMr')
+      .get<IssueLinkConfig[]>('issueLinks', []);
+    Logger.info(
+      `[上线检查工单规则] ${JSON.stringify(configurations.map(configuration => ({ name: configuration.name, pattern: configuration.pattern })))}`
+    );
+    for (const status of statuses) {
+      const links = resolveFeatureIssueLinks(status.branch, configurations);
+      Logger.info(
+        `[上线检查工单链接] ${status.branch}: ${links.length ? links.map(link => `${link.name}=${link.id}`).join(', ') : '未匹配配置'}`
+      );
+    }
     this.changeEmitter.fire(undefined);
   }
 

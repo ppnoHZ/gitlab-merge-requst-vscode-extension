@@ -21,6 +21,7 @@
     "onCommand:gitlabMr.refreshReleaseReadiness",
     "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
     "onCommand:gitlabMr.openReleaseMergeRequest",
+    "onView:gitlabMr.releaseReadiness",
     "workspaceContains:.git"
   ],
   "contributes": {
@@ -88,6 +89,32 @@
           "markdownDescription": "**GitLab Server Address**：填写 GitLab 地址，例如 `https://gitlab.company.com`。不要填写 `/api/v4`。使用 GitLab.com 时保持默认值；私有实例请填写实际域名。",
           "order": 2
         },
+        "gitlabMr.issueLinks": {
+          "type": "array",
+          "default": [
+            {
+              "name": "Jira",
+              "pattern": "^([A-Z][A-Z0-9]*-\\d+)$",
+              "urlTemplate": "https://jira.xpaas.lenovo.com/browse/{id}"
+            },
+            {
+              "name": "ITSM",
+              "pattern": "^(TAS\\d+|ITSM[A-Z0-9]*\\d[A-Z0-9]*)$",
+              "urlTemplate": "https://newitsm.lenovo.com/task/detail/{id}"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "pattern": { "type": "string" },
+              "urlTemplate": { "type": "string" }
+            },
+            "required": ["name", "pattern", "urlTemplate"]
+          },
+          "markdownDescription": "Feature 分支的外部工单链接规则。正则只匹配 `feature/<第二段>/<第三段>` 中的第三段；使用命名捕获组 `id`、第一个捕获组或完整匹配作为编号。URL 模板用 `{id}` 插入编号，可添加多条规则。",
+          "order": 3
+        },
         "gitlabMr.defaultReviewers": {
           "type": "array",
           "items": {
@@ -95,42 +122,52 @@
           },
           "default": [],
           "description": "默认指定 Reviewer 的 GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]，无需加 @）",
-          "order": 3
+          "order": 4
         },
         "gitlabMr.defaultTargetBranch": {
           "type": "string",
           "default": "master",
           "description": "默认目标合并分支（如 master, main, dev 或 release）",
-          "order": 4
+          "order": 5
         },
         "gitlabMr.titleTemplate": {
           "type": "string",
           "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",
           "description": "未命中内置规范时的兜底 MR Title 模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey}",
-          "order": 5
+          "order": 6
         },
         "gitlabMr.removeSourceBranch": {
           "type": "boolean",
           "default": true,
           "description": "创建 MR 时是否默认勾选【合并后删除源分支】",
-          "order": 6
+          "order": 7
         },
         "gitlabMr.squash": {
           "type": "boolean",
           "default": false,
           "description": "创建 MR 时是否默认勾选【Squash commits】",
-          "order": 7
+          "order": 8
         },
         "gitlabMr.autoOpenInBrowser": {
           "type": "boolean",
           "default": true,
           "description": "MR 创建成功后是否自动在浏览器中打开对应页面",
-          "order": 8
+          "order": 9
         }
       }
     },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gitlabMr.releaseReadinessContainer",
+          "title": "上线检查",
+          "icon": "media/release-readiness.svg",
+          "order": 6
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "gitlabMr.releaseReadinessContainer": [
         {
           "id": "gitlabMr.releaseReadiness",
           "name": "上线检查"
@@ -161,12 +198,12 @@
       "view/item/context": [
         {
           "command": "gitlabMr.createReleaseFeatureMergeRequest",
-          "when": "view == gitlabMr.releaseReadiness && (viewItem == releaseFeature-not-created || viewItem == releaseFeature-closed)",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(not-created|closed)/",
           "group": "inline"
         },
         {
           "command": "gitlabMr.openReleaseMergeRequest",
-          "when": "view == gitlabMr.releaseReadiness && (viewItem == releaseFeature-open || viewItem == releaseFeature-merged || viewItem == releaseFeature-closed)",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(open|merged|closed)/",
           "group": "inline"
         }
       ]
@@ -177,7 +214,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
-    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js"
   },
   "devDependencies": {
@@ -185,5 +222,8 @@
     "@types/vscode": "^1.80.0",
     "esbuild": "^0.20.0",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "axios": "^1.20.0"
   }
 }

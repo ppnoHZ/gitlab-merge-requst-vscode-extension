@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 
 export class Logger {
-  private static channel: vscode.OutputChannel;
+  private static channel: vscode.LogOutputChannel;
 
   static init(): void {
     if (!this.channel) {
-      this.channel = vscode.window.createOutputChannel('GitLab MR');
+      this.channel = vscode.window.createOutputChannel('GitLab MR', { log: true });
     }
   }
 
@@ -19,7 +19,7 @@ export class Logger {
     this.init();
     const formattedArgs = args.length > 0 ? ' ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a, null, 2) : a)).join(' ') : '';
     const line = `[${this.formatTime()}] [INFO] ${message}${formattedArgs}`;
-    this.channel.appendLine(line);
+    this.channel.info(line);
     console.log(line);
   }
 
@@ -27,7 +27,7 @@ export class Logger {
     this.init();
     const formattedArgs = args.length > 0 ? ' ' + args.map(a => (typeof a === 'object' ? JSON.stringify(a, null, 2) : a)).join(' ') : '';
     const line = `[${this.formatTime()}] [WARN] ${message}${formattedArgs}`;
-    this.channel.appendLine(line);
+    this.channel.warn(line);
     console.warn(line);
   }
 
@@ -44,7 +44,7 @@ export class Logger {
       }
     }
     const line = `[${this.formatTime()}] [ERROR] ${message}${errorDetails}`;
-    this.channel.appendLine(line);
+    this.channel.error(line);
     console.error(line);
   }
 

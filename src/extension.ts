@@ -118,6 +118,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const openConfiguredIssueLinkCmd = vscode.commands.registerCommand(
+    'gitlabMr.openConfiguredIssueLink',
+    async (url: string) => {
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      }
+    }
+  );
+
   // 5. 注册状态栏按钮
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'gitlabMr.createMergeRequest';
@@ -135,6 +144,7 @@ export function activate(context: vscode.ExtensionContext) {
     refreshReleaseCmd,
     createReleaseFeatureCmd,
     openReleaseMrCmd,
+    openConfiguredIssueLinkCmd,
     releaseProvider,
     releaseTreeView,
     statusBarItem
@@ -450,6 +460,12 @@ async function handleCheckReleaseReadiness(
   }
 
   const gitlabService = new GitLabService(instanceUrl, token);
+  try {
+    const gitlabVersion = await gitlabService.getGitLabVersion();
+    Logger.info(`GitLab 实例软件版本: ${gitlabVersion.version}${gitlabVersion.revision ? ` (${gitlabVersion.revision})` : ''}`);
+  } catch (error: any) {
+    Logger.warn('无法读取 GitLab 实例软件版本（该接口可能受权限限制）', error.message);
+  }
   const project = await gitlabService.getProject(repoInfo.projectPath);
   const projectId = project.id;
   Logger.info(`开始检查上线分支，GitLab 项目 ID: ${projectId}`);

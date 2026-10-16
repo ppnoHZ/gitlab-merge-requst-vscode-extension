@@ -34,9 +34,8 @@ export class TemplateEngine {
       cleanName = branchName;
     }
 
-    // 2. 提取 Jira 号（例如 PROJ-1234, ABC-99, JIRA-1002）
-    // 优先从分支名提取，其次从最近 commits 提取
-    const jiraRegex = /\b([a-zA-Z]{2,10}-\d+)\b/;
+    // Jira keys use an alphanumeric project key and numeric suffix; ITSM keys omit the hyphen.
+    const jiraRegex = /\b([a-z][a-z0-9]*-\d+|itsm[a-z0-9]*\d[a-z0-9]*)\b/i;
     const branchJiraMatch = branchName.match(jiraRegex);
     if (branchJiraMatch) {
       jiraKey = branchJiraMatch[1].toUpperCase();
@@ -47,6 +46,16 @@ export class TemplateEngine {
           jiraKey = commitJiraMatch[1].toUpperCase();
           break;
         }
+      }
+    }
+
+    if (branchType === 'feature') {
+      const featureJiraSegment = branchName.split('/')[2]?.trim();
+      const featureJiraMatch = featureJiraSegment?.match(jiraRegex);
+      if (featureJiraMatch) {
+        jiraKey = featureJiraMatch[1].toUpperCase();
+      } else if (featureJiraSegment && /^\d+$/.test(featureJiraSegment)) {
+        jiraKey = featureJiraSegment;
       }
     }
 
