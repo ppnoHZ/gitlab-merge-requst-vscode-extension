@@ -337,6 +337,15 @@ main 检查失败时仍可查看已加载的分支列表；release 的 MR 查询
 
 使用 GitLab 用户名而不是显示名称，并确认该用户对当前 GitLab 实例可见。任一账号未匹配、用户名为空或查询失败时，不会提交 MR；根据错误提示修正 `gitlabMr.defaultReviewers` 后重试。GitLab 返回的权限或指派错误也会直接显示，不会自动移除 Reviewer 后重新提交。
 
+例如配置账号 `zhoudd3` 时，应填写 `"gitlabMr.defaultReviewers": ["zhoudd3"]`，而不是字符串 `"zhoudd3"`。运行 **GitLab MR: Show Logs**，查看以下日志：
+
+- `[Reviewer 配置]`：生效值以及用户、工作区、文件夹配置，便于定位覆盖问题。
+- `[Reviewer 账号解析]`：用户名、返回的账号 ID 及匹配结果。
+- `[Reviewer 创建请求]`：提交给 GitLab 的 `reviewer_ids`。
+- `[Reviewer 创建响应]`：GitLab 返回的 MR 编号和 Reviewer 列表。
+
+若创建响应未确认配置的审核人，扩展会明确提示“MR 已创建，但未确认 Reviewer”；应打开已有 MR 核对，不要重复创建。日志不记录 Token；分享前仍需移除内部地址等敏感信息。
+
 ### 如何查看错误详情
 
 运行 **GitLab MR: Show Logs**，或点击错误通知中的“查看详细日志”。分享日志前请检查并移除凭据、内部地址及其他敏感信息。

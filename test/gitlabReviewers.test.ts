@@ -1,8 +1,12 @@
 import assert from 'assert';
 import axios from 'axios';
 import { GitLabService } from '../src/gitlabService';
+import { Logger } from '../src/logger';
 
 async function runTests(): Promise<void> {
+  const logs: Array<{ message: string; details: unknown[] }> = [];
+  const originalInfo = Logger.info;
+  Logger.info = (message, ...details) => { logs.push({ message, details }); };
   const requests: Array<{ url: URL; method?: string; body: Record<string, unknown> }> = [];
   let failLookup = false;
   axios.defaults.adapter = async config => {
@@ -12,7 +16,10 @@ async function runTests(): Promise<void> {
     const data = url.pathname.endsWith('/users')
       ? username === 'alice' ? [{ id: 12, username: 'Alice', name: 'Alice' }]
         : username === 'bob' ? [{ id: 34, username: 'bob', name: 'Bob' }] : []
-      : { id: 1, iid: 1, title: 'Test MR', web_url: 'https://gitlab.example.com/mr/1', state: 'opened' };
+      : {
+        id: 1, iid: 1, title: 'Test MR', web_url: 'https://gitlab.example.com/mr/1', state: 'opened',
+        reviewers: [{ id: 12, username: 'alice', name: 'Alice' }]
+      };
     return {
       config, data: JSON.stringify(failLookup ? { message: 'Forbidden' } : data),
       status: failLookup ? 403 : 200, statusText: '', headers: {}
@@ -33,6 +40,15 @@ async function runTests(): Promise<void> {
   assert.equal(requests.at(-1)?.url.pathname, '/api/v4/projects/group%2Fproject/merge_requests');
   assert.deepEqual(requests.at(-1)?.body.reviewer_ids, [12, 34]);
   assert.equal('assignee_ids' in requests.at(-1)!.body, false);
+  assert.deepEqual(logs.find(log => log.message === '[Reviewer 创建请求]')?.details, [{
+    projectId: 'group/project', sourceBranch: 'feature/v1/task', targetBranch: 'release/v1',
+    reviewer_ids: [12, 34]
+  }]);
+  assert.deepEqual(logs.find(log => log.message === '[Reviewer 创建响应]')?.details, [{
+    iid: 1, web_url: 'https://gitlab.example.com/mr/1', reviewersFieldPresent: true,
+    reviewers: [{ id: 12, username: 'alice', state: undefined }]
+  }]);
+  assert.ok(logs.some(log => log.message === '[Reviewer 账号解析]'));
 
   await service.createMergeRequest(payload);
   assert.equal('reviewer_ids' in requests.at(-1)!.body, false);
@@ -42,6 +58,7 @@ async function runTests(): Promise<void> {
   await assert.rejects(service.resolveReviewerIds([' @ ']), /空用户名/);
   failLookup = true;
   await assert.rejects(service.resolveReviewerIds(['alice']), /Reviewer alice.*403.*Forbidden/);
+  Logger.info = originalInfo;
   console.log('[PASS] reviewers: configured usernames, normalization, deduplication, lookup failures and reviewer_ids payload');
 }
 

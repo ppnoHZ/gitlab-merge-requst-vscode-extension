@@ -252,6 +252,7 @@ async function runTests(): Promise<void> {
   assert.equal(created[1].targetBranch, 'release/v1');
   assert.deepEqual(created[1].reviewerIds, [12, 34]);
   assert.deepEqual(reviewerLookups, ['alice', 'bob', 'alice']);
+  assert.match(warnings.at(-1) ?? '', /MR !10 已创建.*12, 34.*不要重复创建/);
   assert.equal(targetPick.items[0].label, 'release/v1');
   assert.match(targetPick.items[0].description ?? '', /同版本 release/);
   assert.equal(targetPick.items.some(item => item.label === 'feature/v1/PROJ-1'), false);
@@ -280,6 +281,9 @@ async function runTests(): Promise<void> {
   assert.equal(created.length, 3);
   configuration.set('defaultReviewers', [' @ ']);
   await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /空用户名/);
+  assert.equal(created.length, 3);
+  configuration.set('defaultReviewers', 'zhoudd3');
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /用户名数组.*zhoudd3/);
   assert.equal(created.length, 3);
   configuration.clear();
 
