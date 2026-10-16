@@ -129,12 +129,12 @@
             {
               "name": "Jira",
               "pattern": "^([A-Z][A-Z0-9]*-\\d+)$",
-              "urlTemplate": "https://jira.xpaas.lenovo.com/browse/{id}"
+              "urlTemplate": "https://jira.xxx.com/browse/{id}"
             },
             {
               "name": "ITSM",
               "pattern": "^(TAS\\d+|ITSM[A-Z0-9]*\\d[A-Z0-9]*)$",
-              "urlTemplate": "https://newitsm.lenovo.com/task/detail/{id}"
+              "urlTemplate": "https://newitsm.xxxx.com/task/detail/{id}"
             }
           ],
           "items": {

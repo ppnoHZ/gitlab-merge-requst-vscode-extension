@@ -282,8 +282,8 @@ async function runTests(): Promise<void> {
   configuration.set('defaultReviewers', [' @ ']);
   await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /空用户名/);
   assert.equal(created.length, 3);
-  configuration.set('defaultReviewers', 'zhoudd3');
-  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /用户名数组.*zhoudd3/);
+  configuration.set('defaultReviewers', 'gitlab_reviewer');
+  await assert.rejects(handleCreateMainMergeRequest(tokenManager, provider, releaseItem), /用户名数组.*gitlab_reviewer/);
   assert.equal(created.length, 3);
   configuration.clear();
 

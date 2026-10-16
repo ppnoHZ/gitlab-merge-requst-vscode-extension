@@ -367,7 +367,7 @@ async function handleCreateMergeRequest(
     workspaceFolder: reviewerConfig?.workspaceFolderValue
   });
   if (!Array.isArray(defaultReviewers) || !defaultReviewers.every(name => typeof name === 'string')) {
-    throw new Error('gitlabMr.defaultReviewers 必须是用户名数组，例如 ["zhoudd3"]，不能是单个字符串。');
+    throw new Error('gitlabMr.defaultReviewers 必须是用户名数组，例如 ["gitlab_reviewer"]，不能是单个字符串。');
   }
   if (defaultReviewers.length === 0) {
     Logger.warn('[Reviewer 配置] 生效配置为空，本次创建 MR 不会指定 Reviewer。请检查 gitlabMr.defaultReviewers 的用户、工作区及文件夹设置。');
