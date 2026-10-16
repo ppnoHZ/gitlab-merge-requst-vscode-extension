@@ -7,11 +7,15 @@ import { Logger } from './logger';
 export class GitService {
   constructor(private readonly workspaceRoot: string) {}
 
-  private runGit(args: string[]): Promise<string> {
+  private runGit(args: string[], mergeConflictExpected = false): Promise<string> {
     return new Promise((resolve, reject) => {
       Logger.info(`[执行 Git 命令] git ${args.join(' ')} (cwd: ${this.workspaceRoot})`);
       execFile('git', args, { cwd: this.workspaceRoot }, (error, stdout, stderr) => {
         if (error) {
+          if (mergeConflictExpected && error.code === 1) {
+            Logger.info('[main 合并检查] 存在合并冲突，不标记为已合入 main');
+            return resolve('');
+          }
           const errMsg = stderr.trim() || error.message;
           Logger.warn(`[Git 命令返回异常] git ${args.join(' ')}: ${errMsg}`);
           return reject(new Error(errMsg));
@@ -70,6 +74,52 @@ export class GitService {
         .map(branch => branch.trim().replace(/^origin\//, ''))
         .filter(branch => branch && branch !== 'HEAD')
     ));
+  }
+
+  async isBranchMergedIntoMain(branch: string): Promise<boolean> {
+    const merged = await this.getBranchesMergedIntoMain(['main', branch], false);
+    return merged.has(branch);
+  }
+
+  async getBranchesMergedIntoMain(branchNames: string[], fetchAll = true): Promise<Set<string>> {
+    if (!branchNames.includes('main')) {
+      throw new Error('远程仓库没有 main 分支，无法检查代码是否已合入 main。');
+    }
+
+    const refspecs = fetchAll
+      ? ['+refs/heads/*:refs/remotes/origin/*']
+      : Array.from(new Set(branchNames)).map(branch => `+refs/heads/${branch}:refs/remotes/origin/${branch}`);
+    await this.runGit(['fetch', '--no-tags', '--refmap=', 'origin', ...refspecs]);
+    const output = await this.runGit([
+      'for-each-ref', '--format=%(refname:strip=3) %(objectname)', 'refs/remotes/origin/'
+    ]);
+    const commits = new Map(output.split('\n').filter(Boolean).map(line => {
+      const [branch, commit] = line.split(' ');
+      return [branch, commit];
+    }));
+    const mainCommit = commits.get('main');
+    if (!mainCommit) {
+      throw new Error('获取远程 main 引用失败，无法检查合并状态。');
+    }
+    const mainTree = await this.runGit(['rev-parse', `${mainCommit}^{tree}`]);
+    const mergedBranches = new Set<string>();
+    for (const branch of branchNames) {
+      if (branch === 'main') {
+        continue;
+      }
+      const commit = commits.get(branch);
+      if (!commit) {
+        throw new Error(`获取远程分支引用失败: ${branch}，请刷新后重试。`);
+      }
+      // Compare the simulated merge tree, so squash/rebase and later main-only changes are supported.
+      const mergedTree = await this.runGit([
+        'merge-tree', '--write-tree', '--no-messages', mainCommit, commit
+      ], true);
+      if (mergedTree === mainTree) {
+        mergedBranches.add(branch);
+      }
+    }
+    return mergedBranches;
   }
 
   /**

@@ -19,6 +19,7 @@
     "onCommand:gitlabMr.showLogs",
     "onCommand:gitlabMr.checkReleaseReadiness",
     "onCommand:gitlabMr.refreshReleaseReadiness",
+    "onCommand:gitlabMr.filterReleaseBranches",
     "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
     "onCommand:gitlabMr.openReleaseMergeRequest",
     "onView:gitlabMr.releaseReadiness",
@@ -40,6 +41,12 @@
         "command": "gitlabMr.refreshReleaseReadiness",
         "title": "Refresh Release Readiness (刷新上线检查)",
         "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.filterReleaseBranches",
+        "title": "Filter Branches (过滤常用分支)",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
       },
       {
         "command": "gitlabMr.createReleaseFeatureMergeRequest",
@@ -177,11 +184,16 @@
     "viewsWelcome": [
       {
         "view": "gitlabMr.releaseReadiness",
-        "contents": "选择上线分支以查看对应 feature 的 MR 状态。\n[选择 release 分支](command:gitlabMr.checkReleaseReadiness)"
+        "contents": "配置 GitLab Token 后自动加载远程分支，默认仅展示常用分支，按目录逐层展开。\n[加载并选择远程分支](command:gitlabMr.checkReleaseReadiness)\n[调整分支过滤](command:gitlabMr.filterReleaseBranches)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "gitlabMr.filterReleaseBranches",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation"
+        },
         {
           "command": "gitlabMr.checkReleaseReadiness",
           "when": "view == gitlabMr.releaseReadiness",
@@ -215,7 +227,7 @@
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js"
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -272,3 +272,59 @@ function runIssueLinkTests() {
 import assert from 'assert';
 runReleaseReadinessTests();
 runIssueLinkTests();
+
+function runTargetRecommendationTests() {
+  const branches = [
+    'main', 'master', 'dev', 'uat', 'pre', 'tst', 'release/2.8.01',
+    'release/2.8.0', 'release/2.8.0/hotfix', 'feature/2.8.0/PROJ-1', 'other'
+  ];
+  const feature = TemplateEngine.recommendTargetBranches('feature/2.8.0/PROJ-1', branches, 'main');
+  assert.deepEqual(feature.slice(0, 3).map(item => item.branch), [
+    'release/2.8.0', 'release/2.8.0/hotfix', 'release/2.8.01'
+  ]);
+  assert.equal(feature[0].reason, '推荐：同版本 release 分支');
+  assert.equal(feature[3].branch, 'main');
+  assert.equal(feature[3].reason, undefined);
+  assert.equal(feature.some(item => item.branch === 'feature/2.8.0/PROJ-1'), false);
+  assert.equal(new Set(feature.map(item => item.branch)).size, feature.length);
+
+  const rules = [
+    ['bugfix/2.8.0/BUG-1', ['release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['feat/2.8.0/PROJ-1', ['release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['fix/2.8.0/BUG-1', ['release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['release/2.8.0', ['main', 'master', 'dev', 'uat', 'pre', 'tst']],
+    ['hotfix/CRQ123', ['main', 'master', 'dev', 'uat', 'pre', 'tst']],
+    ['conflict/resolve', ['dev', 'uat', 'pre', 'tst', 'release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['revert/change', ['main', 'master', 'dev', 'uat', 'pre', 'tst', 'release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['main', ['dev', 'uat', 'pre', 'tst', 'release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']],
+    ['master', ['dev', 'uat', 'pre', 'tst', 'release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']]
+  ] as const;
+  for (const [source, expected] of rules) {
+    const result = TemplateEngine.recommendTargetBranches(source, branches, 'main');
+    assert.deepEqual(
+      result.filter(item => item.reason).map(item => item.branch).sort(),
+      [...expected].sort(),
+      source
+    );
+    const firstOther = result.findIndex(item => !item.reason);
+    assert.equal(result.slice(firstOther).some(item => item.reason), false);
+    assert.equal(result.some(item => item.branch === source), false);
+  }
+  assert.deepEqual(
+    TemplateEngine.recommendTargetBranches('custom/work', ['dev', 'main', 'other'], 'main'),
+    [
+      { branch: 'main', reason: undefined },
+      { branch: 'dev', reason: undefined },
+      { branch: 'other', reason: undefined }
+    ]
+  );
+  assert.deepEqual(TemplateEngine.recommendTargetBranches('main', ['main', 'origin/main'], 'main'), []);
+  assert.deepEqual(
+    TemplateEngine.recommendTargetBranches('feature/task', ['release/a', 'release/b'], 'release/b')
+      .map(item => item.branch),
+    ['release/b', 'release/a']
+  );
+  console.log('[PASS] 目标分支推荐：合并规则、同版本优先、默认目标、保留其他分支、去重和源分支排除');
+}
+
+runTargetRecommendationTests();

@@ -7,7 +7,48 @@ export interface BranchParseResult {
   crqKey: string;
 }
 
+export interface TargetBranchRecommendation {
+  branch: string;
+  reason?: string;
+}
+
 export class TemplateEngine {
+  static recommendTargetBranches(
+    sourceBranch: string,
+    branches: string[],
+    defaultTarget: string
+  ): TargetBranchRecommendation[] {
+    const { branchType } = this.parseBranch(sourceBranch);
+    const targetCategories: Record<string, string[]> = {
+      feature: ['release'],
+      bugfix: ['release'],
+      release: ['testEnv', 'main'],
+      hotfix: ['testEnv', 'main'],
+      conflict: ['testEnv', 'release'],
+      revert: ['testEnv', 'release', 'main'],
+      main: ['testEnv', 'release'],
+      master: ['testEnv', 'release']
+    };
+    const normalize = (branch: string) => branch.replace(/^origin\//, '');
+    const source = normalize(sourceBranch);
+    const version = source.split('/')[1];
+    const ranked = Array.from(new Set([defaultTarget, ...branches]))
+      .filter(branch => normalize(branch) !== source)
+      .map(branch => {
+        const category = this.classifyTargetBranch(branch);
+        const recommended = targetCategories[branchType]?.includes(category) ?? false;
+        const matchingVersion = recommended && category === 'release' &&
+          (branchType === 'feature' || branchType === 'bugfix') &&
+          Boolean(version) && normalize(branch).split('/')[1] === version;
+        return {
+          branch,
+          reason: matchingVersion ? '推荐：同版本 release 分支' : recommended ? '推荐：符合分支合并规则' : undefined,
+          rank: matchingVersion ? 2 : recommended ? 1 : 0
+        };
+      });
+    return ranked.sort((a, b) => b.rank - a.rank).map(({ branch, reason }) => ({ branch, reason }));
+  }
+
   /**
    * 解析源分支名，提取分支类型、去除前缀后的名称、Jira号、CRQ号
    */
@@ -306,4 +347,3 @@ export class TemplateEngine {
     return lines.join('\n');
   }
 }
-
