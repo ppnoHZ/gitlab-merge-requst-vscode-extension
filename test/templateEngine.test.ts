@@ -221,15 +221,15 @@ function runIssueLinkTests() {
   const defaultConfigurations = manifest.contributes.configuration.properties['gitlabMr.issueLinks'].default;
   assert.deepEqual(
     resolveFeatureIssueLinks('feature/LI2600031-W1/QES-17012', defaultConfigurations),
-    [{ name: 'Jira', id: 'QES-17012', url: 'https://www.xxx.com/browse/QES-17012' }]
+    [{ name: 'Jira', id: 'QES-17012', url: 'https://jira.xxx.com/browse/QES-17012' }]
   );
   assert.deepEqual(
     resolveFeatureIssueLinks('feature/LI2600031-W1/TAS202610150419', defaultConfigurations),
-    [{ name: 'ITSM', id: 'TAS202610150419', url: 'https://www.xxx.com/task/detail/TAS202610150419' }]
+    [{ name: 'ITSM', id: 'TAS202610150419', url: 'https://newitsm.xxxx.com/task/detail/TAS202610150419' }]
   );
   assert.deepEqual(
     resolveFeatureIssueLinks('feature/2.8.0/ITSMABC123/login', defaultConfigurations),
-    [{ name: 'ITSM', id: 'ITSMABC123', url: 'https://www.xxx.com/task/detail/ITSMABC123' }]
+    [{ name: 'ITSM', id: 'ITSMABC123', url: 'https://newitsm.xxxx.com/task/detail/ITSMABC123' }]
   );
   const configurations = [
     {

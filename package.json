@@ -1,8 +1,13 @@
 {
-  "name": "gitlab-auto-mr",
-  "displayName": "GitLab Auto Merge Request",
+  "name": "gitlab-auto-merge-request",
+  "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "publisher": "zhoudd3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -287,6 +292,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js"
   },
