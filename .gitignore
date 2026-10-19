@@ -3,3 +3,10 @@ dist
 out
 *.vsix
 .vscode-test
+
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage
+.cache

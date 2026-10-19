@@ -1,12 +1,10 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { GitCommitInfo, GitRepoInfo } from './types';
+import { GitCommitInfo, GitRepoInfo, MainMergeResult } from './types';
 import { Logger } from './logger';
 
-export interface MainMergeResult extends Set<string> {
-  errors?: Map<string, string>;
-}
+export type { MainMergeResult } from './types';
 
 export class GitService {
   // Cache immutable commit pairs, never branch names or timed freshness guesses.

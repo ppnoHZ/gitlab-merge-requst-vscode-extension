@@ -1,0 +1,611 @@
+{
+  "name": "gitlab-auto-merge-request",
+  "displayName": "GitLab Merge Request Tool",
+  "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
+  "version": "0.1.3",
+  "publisher": "zhoudd3",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ppnoHZ/gitlab-merge-requst-vscode-extension.git",
+    "directory": "apps/vscode"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:gitlabMr.createMergeRequest",
+    "onCommand:gitlabMr.setToken",
+    "onCommand:gitlabMr.openSettings",
+    "onCommand:gitlabMr.configureInstanceUrl",
+    "onCommand:gitlabMr.showLogs",
+    "onCommand:gitlabMr.checkReleaseReadiness",
+    "onCommand:gitlabMr.refreshReleaseReadiness",
+    "onCommand:gitlabMr.filterReleaseBranches",
+    "onCommand:gitlabMr.filterBranchesByKeyword",
+    "onCommand:gitlabMr.retryBranches",
+    "onCommand:gitlabMr.loadMoreReleaseData",
+    "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
+    "onCommand:gitlabMr.createMainMergeRequest",
+    "onCommand:gitlabMr.openReleaseMergeRequest",
+    "onCommand:gitlabMr.deleteBranch",
+    "onCommand:gitlabMr.copyBranchName",
+    "onView:gitlabMr.releaseReadiness",
+    "onView:gitlabMr.pendingReviews",
+    "onCommand:gitlabMr.refreshPendingReviews",
+    "onCommand:gitlabMr.openPendingReview",
+    "onCommand:gitlabMr.showPendingReviewChanges",
+    "onCommand:gitlabMr.openReviewDiff",
+    "onCommand:gitlabMr.approvePendingReview",
+    "onView:gitlabMr.auditHistory",
+    "onView:gitlabMr.releaseOverview",
+    "onCommand:gitlabMr.refreshReleaseOverview",
+    "onCommand:gitlabMr.exportReleaseOverview",
+    "onCommand:gitlabMr.filterBranchStatus",
+    "onCommand:gitlabMr.clearBranchStatusFilters",
+    "onCommand:gitlabMr.filterReleaseOverview",
+    "onCommand:gitlabMr.clearReleaseOverviewFilters",
+    "workspaceContains:.git"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitlabMr.filterBranchStatus",
+        "title": "筛选分支状态与更新时间",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.clearBranchStatusFilters",
+        "title": "清除状态和时间筛选",
+        "category": "GitLab MR",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gitlabMr.filterReleaseOverview",
+        "title": "筛选上线总览",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.clearReleaseOverviewFilters",
+        "title": "清除上线总览筛选",
+        "category": "GitLab MR",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "gitlabMr.refreshReleaseOverview",
+        "title": "刷新上线总览",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitlabMr.exportReleaseOverview",
+        "title": "导出上线变更清单（Markdown）",
+        "category": "GitLab MR",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gitlabMr.refreshAudit",
+        "title": "刷新操作审计",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitlabMr.filterAudit",
+        "title": "筛选操作审计",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.exportAudit",
+        "title": "导出操作审计（当前筛选范围）",
+        "category": "GitLab MR",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gitlabMr.checkAuditHealth",
+        "title": "校验并恢复审计存储",
+        "category": "GitLab MR",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "gitlabMr.showAuditOperation",
+        "title": "查看操作审计时间线",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.nextAuditPage",
+        "title": "审计历史下一页",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.previousAuditPage",
+        "title": "审计历史上一页",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.showPendingReviewChanges",
+        "title": "Review Changes (查看 MR 变更)",
+        "category": "GitLab MR",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "gitlabMr.openReviewDiff",
+        "title": "Open MR File Diff (查看 MR 文件差异)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.approvePendingReview",
+        "title": "Approve MR (批准当前审阅版本)",
+        "category": "GitLab MR",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gitlabMr.refreshPendingReviews",
+        "title": "Refresh Pending Reviews (刷新待我审批的 MR)",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitlabMr.openPendingReview",
+        "title": "Open MR in Browser (在浏览器打开 MR)",
+        "category": "GitLab MR",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "gitlabMr.copyBranchName",
+        "title": "Copy Branch Name (复制分支名称)",
+        "category": "GitLab MR",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "gitlabMr.deleteBranch",
+        "title": "Delete Merged Branch (删除已合入 main 的远程分支)",
+        "category": "GitLab MR",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "gitlabMr.createMergeRequest",
+        "title": "Create Merge Request (一键创建 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.checkReleaseReadiness",
+        "title": "Check Release Readiness (检查上线分支合并状态)",
+        "category": "GitLab MR",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "gitlabMr.refreshReleaseReadiness",
+        "title": "Refresh Release Readiness (刷新上线检查)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.filterReleaseBranches",
+        "title": "Filter Branches (过滤常用分支)",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.retryBranches",
+        "title": "Retry Branch Loading (重试加载分支)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.loadMoreReleaseData",
+        "title": "Load More Release Data (加载更多上线检查数据)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.filterBranchesByKeyword",
+        "title": "Filter Branches by Keyword (二次过滤分支)",
+        "category": "GitLab MR",
+        "icon": "$(search)"
+      },
+      {
+        "command": "gitlabMr.createReleaseFeatureMergeRequest",
+        "title": "Create Feature Merge Request (为该功能分支创建 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.createMainMergeRequest",
+        "title": "创建 MR（按合并规则推荐目标分支）",
+        "category": "GitLab MR",
+        "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "gitlabMr.openReleaseMergeRequest",
+        "title": "Open Release Merge Request (打开已有 MR)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.openSettings",
+        "title": "Open Settings (打开可视化配置面板)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.configureInstanceUrl",
+        "title": "Configure GitLab Server Address (配置 GitLab 地址)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.showLogs",
+        "title": "Show Logs (查看控制台输出日志)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.setToken",
+        "title": "Set Access Token (快速录入 Token)",
+        "category": "GitLab MR"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "GitLab Auto MR 配置",
+      "order": 1,
+      "properties": {
+        "gitlabMr.accessToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitLab Personal Access Token（需要 api 读写权限，可直接在此输入并保存）",
+          "order": 1
+        },
+        "gitlabMr.instanceUrl": {
+          "type": "string",
+          "default": "https://gitlab.com",
+          "markdownDescription": "**GitLab Server Address**：填写 GitLab 地址，例如 `https://gitlab.company.com`。不要填写 `/api/v4`。使用 GitLab.com 时保持默认值；私有实例请填写实际域名。",
+          "order": 2
+        },
+        "gitlabMr.issueLinks": {
+          "type": "array",
+          "default": [
+            {
+              "name": "Jira",
+              "pattern": "^([A-Z][A-Z0-9]*-\\d+)$",
+              "urlTemplate": "https://jira.xxx.com/browse/{id}"
+            },
+            {
+              "name": "ITSM",
+              "pattern": "^(TAS\\d+|ITSM[A-Z0-9]*\\d[A-Z0-9]*)$",
+              "urlTemplate": "https://newitsm.xxxx.com/task/detail/{id}"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              },
+              "urlTemplate": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "pattern",
+              "urlTemplate"
+            ]
+          },
+          "markdownDescription": "Feature 分支的外部工单链接规则。正则只匹配 `feature/<第二段>/<第三段>` 中的第三段；使用命名捕获组 `id`、第一个捕获组或完整匹配作为编号。URL 模板用 `{id}` 插入编号，可添加多条规则。",
+          "order": 3
+        },
+        "gitlabMr.defaultReviewers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "所有创建 MR 入口默认指定的 Reviewer GitLab 用户名列表（如 [\"zhangsan\", \"lisi\"]，无需加 @）。配置的账号必须全部匹配成功才会提交 MR；空列表不指定 Reviewer。",
+          "order": 4
+        },
+        "gitlabMr.defaultTargetBranch": {
+          "type": "string",
+          "default": "master",
+          "description": "默认目标合并分支（如 master, main, dev 或 release）",
+          "order": 5
+        },
+        "gitlabMr.hideNonConformingTargetBranches": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "选择 MR 目标分支时，仅展示符合内置源分支 → 目标分支合并规则的候选。默认开启；不符合规则的默认目标也会隐藏。无匹配规则或候选时提示并停止，可关闭此配置恢复显示全部候选。不会影响源分支选择、远程分支浏览或 release 检查中固定目标的补建 MR。",
+          "order": 11
+        },
+        "gitlabMr.titleTemplate": {
+          "type": "string",
+          "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",
+          "description": "未命中内置规范时的兜底 MR Title 模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey}",
+          "order": 6
+        },
+        "gitlabMr.removeSourceBranch": {
+          "type": "boolean",
+          "default": true,
+          "description": "创建 MR 时是否默认勾选【合并后删除源分支】",
+          "order": 7
+        },
+        "gitlabMr.allowBranchDeletion": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "允许手动删除已全部合入远程 `main` 的分支。默认关闭；删除前必须确认并重新检查最新代码。禁止删除 `main`、默认分支和受保护分支；仅删除远程分支，不影响本地分支及 `gitlabMr.removeSourceBranch` 配置。",
+          "order": 10
+        },
+        "gitlabMr.squash": {
+          "type": "boolean",
+          "default": false,
+          "description": "创建 MR 时是否默认勾选【Squash commits】",
+          "order": 8
+        },
+        "gitlabMr.autoOpenInBrowser": {
+          "type": "boolean",
+          "default": true,
+          "description": "MR 创建成功后是否自动在浏览器中打开对应页面",
+          "order": 9
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gitlabMr-releaseReadinessContainer",
+          "title": "GitLab 工作台",
+          "icon": "media/release-readiness.svg",
+          "order": 6
+        }
+      ]
+    },
+    "views": {
+      "gitlabMr-releaseReadinessContainer": [
+        {
+          "id": "gitlabMr.releaseReadiness",
+          "name": "分支管理"
+        },
+        {
+          "id": "gitlabMr.releaseOverview",
+          "name": "上线总览"
+        },
+        {
+          "id": "gitlabMr.pendingReviews",
+          "name": "待我审批"
+        },
+        {
+          "id": "gitlabMr.auditHistory",
+          "name": "操作审计"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "gitlabMr.pendingReviews",
+        "contents": "按 Project 展示当前 GitLab 实例中指定你为 Reviewer 且尚未批准的开放 MR。\n[加载待我审批的 MR](command:gitlabMr.refreshPendingReviews)"
+      },
+      {
+        "view": "gitlabMr.releaseReadiness",
+        "contents": "配置 GitLab Token 后自动加载远程分支，默认仅展示常用分支，按目录逐层展开。\n[加载并选择远程分支](command:gitlabMr.checkReleaseReadiness)\n[调整分支过滤](command:gitlabMr.filterReleaseBranches)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "gitlabMr.showAuditOperation",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.nextAuditPage",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.previousAuditPage",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.showPendingReviewChanges",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.openReviewDiff",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.openPendingReview",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.copyBranchName",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.retryBranches",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.loadMoreReleaseData",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "gitlabMr.filterBranchStatus",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitlabMr.clearBranchStatusFilters",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation@4"
+        },
+        {
+          "command": "gitlabMr.filterReleaseOverview",
+          "when": "view == gitlabMr.releaseOverview",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitlabMr.clearReleaseOverviewFilters",
+          "when": "view == gitlabMr.releaseOverview",
+          "group": "navigation@4"
+        },
+        {
+          "command": "gitlabMr.refreshReleaseOverview",
+          "when": "view == gitlabMr.releaseOverview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitlabMr.exportReleaseOverview",
+          "when": "view == gitlabMr.releaseOverview",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitlabMr.refreshAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitlabMr.filterAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitlabMr.exportAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitlabMr.checkAuditHealth",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "audit"
+        },
+        {
+          "command": "gitlabMr.refreshPendingReviews",
+          "when": "view == gitlabMr.pendingReviews",
+          "group": "navigation"
+        },
+        {
+          "command": "gitlabMr.filterReleaseBranches",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation"
+        },
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation",
+          "icon": "$(git-branch)"
+        },
+        {
+          "command": "gitlabMr.refreshReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation",
+          "icon": "$(refresh)"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
+        },
+        {
+          "command": "gitlabMr.showPendingReviewChanges",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
+        },
+        {
+          "command": "gitlabMr.openPendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline"
+        },
+        {
+          "command": "gitlabMr.copyBranchName",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
+          "group": "inline@2"
+        },
+        {
+          "command": "gitlabMr.copyBranchName",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
+          "group": "copy"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
+          "group": "delete"
+        },
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitlabMr.checkReleaseReadiness",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
+          "group": "check"
+        },
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
+          "group": "inline"
+        },
+        {
+          "command": "gitlabMr.createMainMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
+          "group": "main"
+        },
+        {
+          "command": "gitlabMr.createReleaseFeatureMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(not-created|closed)/",
+          "group": "inline"
+        },
+        {
+          "command": "gitlabMr.openReleaseMergeRequest",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(open|merged|closed)/",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:filters && npm run test:release-overview && npm run test:audit",
+    "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
+    "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
+    "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "@gitlab-workbench/core": "0.0.0"
+  }
+}

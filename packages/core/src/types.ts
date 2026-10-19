@@ -118,3 +118,13 @@ export interface ReviewDiffVersion {
   overflow?: boolean;
   diffs: ReviewChangedFile[];
 }
+
+export interface MainMergeResult extends Set<string> {
+  errors?: Map<string, string>;
+}
+
+/** Bootstrap contract; authentication and project loading are added by the web implementation. */
+export interface WorkbenchStatus {
+  status: 'ok';
+  gitlab: { connected: boolean };
+}

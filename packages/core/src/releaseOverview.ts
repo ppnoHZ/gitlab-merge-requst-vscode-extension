@@ -1,6 +1,6 @@
 import { getReleaseFeatureStatuses, getReleaseVersion, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { GitLabBranchPage, GitLabPage } from './types';
-import type { MainMergeResult } from './gitService';
+import type { MainMergeResult } from './types';
 
 export interface ReleaseOverviewEntry {
   branch: string;

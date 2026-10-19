@@ -1,5 +1,3 @@
-import * as vscode from 'vscode';
-
 export type MainFilter = 'merged' | 'unmerged' | 'unknown';
 export type RiskFilter = 'missing' | 'closed' | 'open' | 'failed';
 export type UpdatedFilter = 'all' | '7d' | '30d' | 'stale90' | 'unknown';
@@ -33,30 +31,4 @@ export function matchesUpdated(date: string | undefined, filter: UpdatedFilter, 
 export function filterDescription(filters: WorkbenchFilters): string {
   return [filters.main.map(key => mainLabels[key]).join(' / '), filters.risks.map(key => riskLabels[key]).join(' / '),
     filters.updated !== 'all' ? updatedLabels[filters.updated] : ''].filter(Boolean).join('；') || '无';
-}
-
-// A cancelled picker leaves all existing dimensions intact. Empty multi-selection means all.
-export async function pickWorkbenchFilters(current: WorkbenchFilters, risks: boolean): Promise<WorkbenchFilters | undefined> {
-  const dimension = await vscode.window.showQuickPick([
-    { label: 'main 合入状态', key: 'main' },
-    ...(risks ? [{ label: '上线风险', key: 'risks' }] : []),
-    { label: '最近更新时间', key: 'updated' }
-  ], { title: '筛选条件', placeHolder: '不同条件取交集；同一条件多选取并集' });
-  if (!dimension) return undefined;
-  if (dimension.key === 'updated') {
-    const selection = await vscode.window.showQuickPick(
-      (Object.keys(updatedLabels) as UpdatedFilter[]).map(key => ({ key, label: updatedLabels[key], description: current.updated === key ? '当前选择' : undefined })),
-      { title: '最近更新时间', placeHolder: '按分支最新提交时间筛选；无有效时间的数据归为未知' });
-    return selection ? { ...current, updated: selection.key } : undefined;
-  }
-  if (dimension.key === 'main') {
-    const selection = await vscode.window.showQuickPick(
-      (Object.keys(mainLabels) as MainFilter[]).map(key => ({ key, label: mainLabels[key], picked: current.main.includes(key) })),
-      { title: 'main 合入状态', canPickMany: true, placeHolder: '多选；清空选择表示全部状态' });
-    return selection === undefined ? undefined : { ...current, main: selection.map(item => item.key) };
-  }
-  const selection = await vscode.window.showQuickPick(
-    (Object.keys(riskLabels) as RiskFilter[]).map(key => ({ key, label: riskLabels[key], picked: current.risks.includes(key) })),
-    { title: '上线风险', canPickMany: true, placeHolder: '多选；清空选择表示全部风险' });
-  return selection === undefined ? undefined : { ...current, risks: selection.map(item => item.key) };
 }
