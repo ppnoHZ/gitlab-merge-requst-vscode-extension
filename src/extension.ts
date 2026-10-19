@@ -11,6 +11,8 @@ import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { PendingReviewItem, PendingReviewsProvider } from './pendingReviewsView';
 import { Audit, AuditStore } from './audit';
 import { registerAuditView } from './auditView';
+import { loadReleaseOverview } from './releaseOverview';
+import { ReleaseOverviewProvider } from './releaseOverviewView';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -51,6 +53,47 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
 
   const tokenManager = new TokenManager(context);
+  const overview = new ReleaseOverviewProvider(async () => {
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) return undefined;
+    const token = await tokenManager.getToken();
+    if (!token) return undefined;
+    const git = new GitService(workspace.uri.fsPath);
+    const repo = await git.getRepoInfo();
+    let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace.uri)
+      .get<string>('instanceUrl', 'https://gitlab.com').trim();
+    if (instanceUrl === 'https://gitlab.com' && repo.gitlabHost !== 'gitlab.com') {
+      instanceUrl = `https://${repo.gitlabHost}`;
+    }
+    const service = new GitLabService(instanceUrl, token);
+    const project = await service.getProject(repo.projectPath);
+    return loadReleaseOverview(repo.projectPath, {
+      branches: page => service.getProjectBranches(project.id, page),
+      requests: (branch, page) => service.getMergeRequestsTargetingBranch(project.id, branch, page),
+      mergedIntoMain: branches => git.getBranchesMergedIntoMain(branches, false)
+    });
+  });
+  const overviewTree = vscode.window.createTreeView('gitlabMr.releaseOverview', {
+    treeDataProvider: overview, showCollapseAll: true
+  });
+  const refreshOverview = () => overview.refresh();
+  context.subscriptions.push(overview, overviewTree,
+    registerCommand('gitlabMr.refreshReleaseOverview', refreshOverview),
+    registerCommand('gitlabMr.exportReleaseOverview', () => overview.export()),
+    overviewTree.onDidChangeVisibility(event => {
+      if (event.visible && !overview.snapshot) void refreshOverview();
+    }),
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+        overview.invalidate();
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => overview.invalidate()),
+    context.secrets.onDidChange(event => {
+      if (event.key === 'gitlabMr.personalAccessToken') overview.invalidate();
+    })
+  );
+  if (overviewTree.visible) void refreshOverview();
   const pendingReviews = new PendingReviewsProvider(async prompt => {
     let token = await tokenManager.getToken();
     if (!token && prompt) {

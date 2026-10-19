@@ -41,10 +41,15 @@
     "onCommand:gitlabMr.openReviewDiff",
     "onCommand:gitlabMr.approvePendingReview",
     "onView:gitlabMr.auditHistory",
+    "onView:gitlabMr.releaseOverview",
+    "onCommand:gitlabMr.refreshReleaseOverview",
+    "onCommand:gitlabMr.exportReleaseOverview",
     "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
+      {"command": "gitlabMr.refreshReleaseOverview", "title": "刷新上线总览", "category": "GitLab MR", "icon": "$(refresh)"},
+      {"command": "gitlabMr.exportReleaseOverview", "title": "导出上线变更清单（Markdown）", "category": "GitLab MR", "icon": "$(export)"},
       {
         "command": "gitlabMr.refreshAudit",
         "title": "刷新操作审计",
@@ -312,6 +317,7 @@
           "id": "gitlabMr.releaseReadiness",
           "name": "分支管理"
         },
+        { "id": "gitlabMr.releaseOverview", "name": "上线总览" },
         {
           "id": "gitlabMr.pendingReviews",
           "name": "待我审批"
@@ -375,6 +381,8 @@
         }
       ],
       "view/title": [
+        {"command": "gitlabMr.refreshReleaseOverview", "when": "view == gitlabMr.releaseOverview", "group": "navigation@1"},
+        {"command": "gitlabMr.exportReleaseOverview", "when": "view == gitlabMr.releaseOverview", "group": "navigation@2"},
         {
           "command": "gitlabMr.refreshAudit",
           "when": "view == gitlabMr.auditHistory",
@@ -499,7 +507,8 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:audit",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:release-overview && npm run test:audit",
+    "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js"
   },
   "devDependencies": {
