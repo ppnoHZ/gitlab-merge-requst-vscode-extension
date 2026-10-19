@@ -4,6 +4,7 @@ import { URL } from 'url';
 import { GitLabBranchPage, GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult, ReviewDetails, ReviewDiffRefs, ReviewDiffVersion, ReviewMergeRequest, ReviewProject } from './types';
 import { Logger } from './logger';
 import { ReleaseMergeRequest } from './releaseReadiness';
+import { Audit, AuditApiError, AuditContext } from './audit';
 
 interface GitLabProject {
   id: number;
@@ -22,6 +23,11 @@ interface GitLabBranch {
 export class GitLabService {
   private readonly baseUrl: string;
   private readonly token: string;
+  private actor: Pick<AuditContext, 'userId' | 'username'> = {};
+
+  get auditContext(): AuditContext {
+    return { instance: this.baseUrl.replace(/\/api\/v4$/, ''), ...this.actor, source: 'api' };
+  }
 
   constructor(instanceUrl: string, token: string) {
     // 去除末尾斜杠
@@ -67,7 +73,7 @@ export class GitLabService {
     } catch (error) {
       Logger.error(`[GitLab 网络错误] 无法连接到 ${fullUrl}`, error);
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`连接 GitLab 失败: ${message}`);
+      throw new AuditApiError(`连接 GitLab 失败: ${message}`);
     }
 
     const responseBody = typeof response.data === 'string'
@@ -84,12 +90,12 @@ export class GitLabService {
         return;
       }
       if (!responseBody.trim()) {
-        throw new Error(`GitLab API 返回空响应 [${status}]: ${method} ${path}`);
+        throw new AuditApiError(`GitLab API 返回空响应 [${status}]: ${method} ${path}`, status);
       }
       try {
         return JSON.parse(responseBody) as T;
       } catch {
-        throw new Error(`GitLab API 返回无效 JSON [${status}]: ${method} ${path}`);
+        throw new AuditApiError(`GitLab API 返回无效 JSON [${status}]: ${method} ${path}`, status);
       }
     }
 
@@ -105,14 +111,20 @@ export class GitLabService {
       errorMsg += `: ${responseBody}`;
     }
     Logger.error(`[GitLab API 失败 ${status}] ${method} ${path}\n响应体: ${responseBody}`);
-    throw new Error(errorMsg);
+    throw new AuditApiError(errorMsg, status);
   }
 
   /**
    * 验证 Token 并获取当前登录用户信息
    */
   async getCurrentUser(): Promise<GitLabUser> {
-    return this.request<GitLabUser>('/user');
+    this.actor = {};
+    const user = await this.request<GitLabUser>('/user');
+    if (!Number.isSafeInteger(user?.id) || user.id <= 0 || typeof user.username !== 'string') {
+      throw new Error('GitLab 当前用户响应无效，无法确认身份。');
+    }
+    this.actor = { userId: user.id, username: user.username };
+    return user;
   }
 
   async getReviewMergeRequests(userId: number): Promise<ReviewMergeRequest[]> {
@@ -212,13 +224,15 @@ export class GitLabService {
   }
 
   async approveReview(projectId: number, iid: number, sha: string, userId: number): Promise<void> {
-    const result = await this.request<{ approved_by?: Array<{ user?: { id?: number } }> }>(
-      `/projects/${projectId}/merge_requests/${iid}/approve`,
-      { method: 'POST', body: { sha } }
-    );
-    if (!Array.isArray(result?.approved_by) || !result.approved_by.some(entry => entry.user?.id === userId)) {
-      throw new Error(`GitLab 未确认你对 MR !${iid} 的批准，请刷新审批状态，不要直接重复提交。`);
-    }
+    await Audit.sensitive('mr.approve', 'high', { ...this.auditContext, project: projectId, mr: iid, sha, userId }, async () => {
+      const result = await this.request<{ approved_by?: Array<{ user?: { id?: number } }> }>(
+        `/projects/${projectId}/merge_requests/${iid}/approve`,
+        { method: 'POST', body: { sha } }
+      );
+      if (!Array.isArray(result?.approved_by) || !result.approved_by.some(entry => entry.user?.id === userId)) {
+        throw new AuditApiError(`GitLab 未确认你对 MR !${iid} 的批准，请刷新审批状态，不要直接重复提交。`);
+      }
+    });
   }
 
   async getGitLabVersion(): Promise<{ version: string; revision?: string }> {
@@ -340,7 +354,9 @@ export class GitLabService {
     if (current.commit?.id !== expectedCommit || main.commit?.id !== expectedMainCommit) {
       throw new Error('分支或 main 在检查期间已更新，已取消删除，请刷新后重试。');
     }
-    await this.request(branchPath, { method: 'DELETE' });
+    await Audit.sensitive('branch.delete', 'high', {
+      ...this.auditContext, project: projectId, branch, sha: expectedCommit, mainSha: expectedMainCommit
+    }, () => this.request(branchPath, { method: 'DELETE' }));
   }
 
   async getMergeRequestsTargetingBranch(
@@ -435,10 +451,20 @@ export class GitLabService {
       targetBranch: payload.targetBranch,
       reviewer_ids: payload.reviewerIds ?? []
     });
-    const mr = await this.request<MergeRequestResult>(`/projects/${projectIdEncoded}/merge_requests`, {
-      method: 'POST',
-      body
-    });
+    const mr = await Audit.sensitive('mr.create', 'sensitive', {
+      ...this.auditContext, project: payload.projectId, sourceBranch: payload.sourceBranch,
+      targetBranch: payload.targetBranch, reviewers: payload.reviewerIds,
+      removeSourceBranch: body.remove_source_branch, squash: body.squash
+    }, async () => {
+      const result = await this.request<MergeRequestResult>(`/projects/${projectIdEncoded}/merge_requests`, {
+        method: 'POST', body
+      });
+      if (!Number.isSafeInteger(result?.iid) || result.iid <= 0 ||
+        typeof result.web_url !== 'string' || !/^https?:\/\//i.test(result.web_url)) {
+        throw new AuditApiError('GitLab 创建 MR 的返回结果无效，结果未知，请在 GitLab 核对，不要重复提交。');
+      }
+      return result;
+    }, result => ({ mr: result.iid }));
     Logger.info('[Reviewer 创建响应]', {
       iid: mr.iid,
       web_url: mr.web_url,

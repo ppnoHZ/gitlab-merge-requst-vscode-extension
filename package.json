@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -40,10 +40,50 @@
     "onCommand:gitlabMr.showPendingReviewChanges",
     "onCommand:gitlabMr.openReviewDiff",
     "onCommand:gitlabMr.approvePendingReview",
+    "onView:gitlabMr.auditHistory",
     "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "gitlabMr.refreshAudit",
+        "title": "刷新操作审计",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitlabMr.filterAudit",
+        "title": "筛选操作审计",
+        "category": "GitLab MR",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "gitlabMr.exportAudit",
+        "title": "导出操作审计（当前筛选范围）",
+        "category": "GitLab MR",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gitlabMr.checkAuditHealth",
+        "title": "校验并恢复审计存储",
+        "category": "GitLab MR",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "gitlabMr.showAuditOperation",
+        "title": "查看操作审计时间线",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.nextAuditPage",
+        "title": "审计历史下一页",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.previousAuditPage",
+        "title": "审计历史上一页",
+        "category": "GitLab MR"
+      },
       {
         "command": "gitlabMr.showPendingReviewChanges",
         "title": "Review Changes (查看 MR 变更)",
@@ -275,6 +315,10 @@
         {
           "id": "gitlabMr.pendingReviews",
           "name": "待我审批"
+        },
+        {
+          "id": "gitlabMr.auditHistory",
+          "name": "操作审计"
         }
       ]
     },
@@ -290,6 +334,9 @@
     ],
     "menus": {
       "commandPalette": [
+        { "command": "gitlabMr.showAuditOperation", "when": "false" },
+        { "command": "gitlabMr.nextAuditPage", "when": "false" },
+        { "command": "gitlabMr.previousAuditPage", "when": "false" },
         {
           "command": "gitlabMr.showPendingReviewChanges",
           "when": "false"
@@ -328,6 +375,26 @@
         }
       ],
       "view/title": [
+        {
+          "command": "gitlabMr.refreshAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gitlabMr.filterAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@2"
+        },
+        {
+          "command": "gitlabMr.exportAudit",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "navigation@3"
+        },
+        {
+          "command": "gitlabMr.checkAuditHealth",
+          "when": "view == gitlabMr.auditHistory",
+          "group": "audit"
+        },
         {
           "command": "gitlabMr.refreshPendingReviews",
           "when": "view == gitlabMr.pendingReviews",
@@ -432,7 +499,8 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js"
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:audit",
+    "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

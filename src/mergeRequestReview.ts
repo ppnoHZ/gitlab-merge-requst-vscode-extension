@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { GitLabService } from './gitlabService';
 import { ReviewChangedFile, ReviewDetails, ReviewMergeRequest } from './types';
+import { Audit, AuditContext, AuditWriteError } from './audit';
 
 export interface ReviewFile {
   change: ReviewChangedFile;
   left: vscode.Uri;
   right: vscode.Uri;
   title: string;
+  auditContext: AuditContext;
 }
 
 interface ReviewSnapshot {
@@ -104,7 +106,9 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
         : service.getReviewFileContent(details.target_project_id, change.old_path, details.diff_refs.base_sha)),
       right: this.uri(change.new_path, () => change.deleted_file ? Promise.resolve('')
         : service.getReviewFileContent(details.source_project_id, change.new_path, details.diff_refs.head_sha)),
-      title: `!${request.iid} ${change.new_path} (${details.diff_refs.head_sha.slice(0, 8)})`
+      title: `!${request.iid} ${change.new_path} (${details.diff_refs.head_sha.slice(0, 8)})`,
+      auditContext: { ...service.auditContext, project: request.project_id, mr: request.iid,
+        sha: details.diff_refs.head_sha, baseSha: details.diff_refs.base_sha, file: change.new_path, source: 'command' as const }
     }));
     const snapshot = { details, files, complete };
     this.snapshots.set(request, snapshot);
@@ -118,9 +122,16 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
       this.provideTextDocumentContent(file.right)
     ]);
     await vscode.commands.executeCommand('vscode.diff', file.left, file.right, file.title, { preview: true });
+    await Audit.event('review.open-diff', file.auditContext);
   }
 
   async approve(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
+    return Audit.operation('mr.approve', 'high', {
+      ...service.auditContext, project: request.project_id, mr: request.iid, userId, source: 'command'
+    }, () => this.approveAudited(request, service, userId));
+  }
+
+  private async approveAudited(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
     if (this.approving.has(request)) {
       throw new Error('该 MR 正在批准中，请勿重复操作。');
     }
@@ -141,6 +152,9 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
       if (answer !== 'Approve（批准）') {
         return false;
       }
+      await Audit.note('confirmed', {
+        sha: snapshot.details.diff_refs.head_sha, baseSha: snapshot.details.diff_refs.base_sha
+      });
       if (generation !== this.generation) {
         throw new Error('审阅列表或 GitLab 连接已更新，已取消批准，请重新查看变更。');
       }
@@ -160,6 +174,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
       try {
         await service.approveReview(request.project_id, request.iid, snapshot.details.diff_refs.head_sha, userId);
       } catch (error) {
+        if (error instanceof AuditWriteError) { throw error; }
         throw new Error(`批准未确认: ${error instanceof Error ? error.message : String(error)}。请刷新确认状态；权限、409 版本冲突或需重新认证时，请在 GitLab 页面处理，不要盲目重复提交。`);
       }
       return true;

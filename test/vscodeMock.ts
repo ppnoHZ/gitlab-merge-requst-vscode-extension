@@ -1,3 +1,5 @@
+import './auditSetup';
+
 export enum TreeItemCollapsibleState {
   None,
   Collapsed,
@@ -34,8 +36,13 @@ export class EventEmitter<T> {
 }
 
 export const configuration = new Map<string, unknown>();
+export const openedDocuments: Array<{ language: string; content: string }> = [];
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
+  openTextDocument: async (options: { language: string; content: string }) => {
+    openedDocuments.push(options);
+    return options;
+  },
   getConfiguration: () => ({
     get: <T>(key: string, fallback: T): T => configuration.has(key) ? configuration.get(key) as T : fallback,
     inspect: (key: string) => ({ globalValue: configuration.get(key) })
@@ -63,6 +70,7 @@ export const clipboard = {
 };
 export const Uri = {
   parse: (value: string) => value,
+  file: (fsPath: string) => ({ scheme: 'file', fsPath }),
   from: (components: { scheme: string; path: string }) => ({
     scheme: components.scheme,
     path: components.path,
@@ -88,6 +96,7 @@ export const env = {
 };
 
 export const window = {
+  showTextDocument: async (document: unknown) => document,
   showErrorMessage: async (message: string) => { errorMessages.push(message); },
   showQuickPick: async (items: Array<{ label: string; description?: string }>) => {
     targetPick.items = items;

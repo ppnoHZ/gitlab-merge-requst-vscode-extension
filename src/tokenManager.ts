@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
+import { Audit } from './audit';
 
 export class TokenManager {
   private static readonly SECRET_KEY = 'gitlabMr.personalAccessToken';
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: Pick<vscode.ExtensionContext, 'secrets'>) {}
 
   /**
    * 获取 Access Token：优先从 VS Code 设置项获取，其次从 SecretStorage 获取
@@ -28,16 +29,19 @@ export class TokenManager {
    */
   async setToken(token: string): Promise<void> {
     const trimmed = token.trim();
-    await this.context.secrets.store(TokenManager.SECRET_KEY, trimmed);
-    const config = vscode.workspace.getConfiguration('gitlabMr');
-    await config.update('accessToken', trimmed, vscode.ConfigurationTarget.Global);
+    await Audit.sensitive('token.set', 'sensitive', { source: 'command' }, async () => {
+      await this.context.secrets.store(TokenManager.SECRET_KEY, trimmed);
+      const config = vscode.workspace.getConfiguration('gitlabMr');
+      await config.update('accessToken', trimmed, vscode.ConfigurationTarget.Global);
+    });
   }
 
   /**
    * 删除保存的 Token
    */
   async clearToken(): Promise<void> {
-    await this.context.secrets.delete(TokenManager.SECRET_KEY);
+    await Audit.sensitive('token.clear', 'sensitive', { source: 'command' },
+      async () => { await this.context.secrets.delete(TokenManager.SECRET_KEY); });
   }
 
   /**

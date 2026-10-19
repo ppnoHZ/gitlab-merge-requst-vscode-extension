@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomUUID } from 'crypto';
 import { GitService } from './gitService';
 import { GitLabService } from './gitlabService';
 import { TemplateEngine } from './templateEngine';
@@ -8,12 +9,46 @@ import { getReleaseFeatureStatuses, getReleaseVersion } from './releaseReadiness
 import { commonBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
 import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { PendingReviewItem, PendingReviewsProvider } from './pendingReviewsView';
+import { Audit, AuditStore } from './audit';
+import { registerAuditView } from './auditView';
 
 let statusBarItem: vscode.StatusBarItem;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   Logger.init();
   Logger.info('GitLab Auto MR 插件已成功激活。');
+  const auditStore = new AuditStore(undefined, context.extension.packageJSON.version);
+  Audit.configure(auditStore);
+  registerAuditView(context, auditStore);
+  try {
+    await auditStore.recover();
+  } catch (error) {
+    Logger.error('审计存储初始化失败', error);
+    vscode.window.showErrorMessage('审计存储不可用，敏感操作已暂停。请在「操作审计」检查目录权限或日志完整性。');
+  }
+  const registerCommand = <Args extends unknown[]>(name: string, handler: (...args: Args) => unknown) =>
+    vscode.commands.registerCommand(name, async (...args: Args) => {
+      try {
+        // Command entry records describe intent, not a claim that the action succeeded.
+        await auditStore.append(randomUUID(), `command.${name.replace('gitlabMr.', '')}`, 'normal', 'requested',
+          { source: 'command' });
+        return await handler(...args);
+      } catch (error) {
+        Logger.error(`命令执行失败: ${name}`, error);
+        vscode.window.showErrorMessage(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    for (const key of ['instanceUrl', 'accessToken', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
+      'defaultReviewers', 'removeSourceBranch', 'squash', 'defaultTargetBranch']) {
+      if (event.affectsConfiguration(`gitlabMr.${key}`)) {
+        void Audit.event('config.observed', { setting: key, source: 'configuration' }, 'sensitive').catch(error => {
+          Logger.error('关键配置变更审计失败', error);
+          vscode.window.showErrorMessage('关键配置已经变更，但审计记录写入失败；后续敏感操作已暂停。');
+        });
+      }
+    }
+  }));
 
   const tokenManager = new TokenManager(context);
   const pendingReviews = new PendingReviewsProvider(async prompt => {
@@ -44,7 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
     await pendingReviews.refresh(prompt);
     pendingTreeView.description = pendingReviews.summary;
   };
-  const refreshPendingReviewsCmd = vscode.commands.registerCommand('gitlabMr.refreshPendingReviews', () =>
+  const refreshPendingReviewsCmd = registerCommand('gitlabMr.refreshPendingReviews', () =>
     refreshPendingReviews()
   );
   const runReviewAction = async (title: string, action: () => Promise<void>) => {
@@ -60,12 +95,13 @@ export function activate(context: vscode.ExtensionContext) {
       throw new Error('请选择待审批 MR。');
     }
     await pendingReviews.loadChanges(item);
+    await Audit.event('review.load-changes', { project: item.request?.project_id, mr: item.request?.iid, source: 'command' });
     if (reveal) {
       await pendingTreeView.reveal(item, { expand: 1, select: true });
     }
   });
-  const showReviewChangesCmd = vscode.commands.registerCommand('gitlabMr.showPendingReviewChanges', loadReviewChanges);
-  const openReviewDiffCmd = vscode.commands.registerCommand('gitlabMr.openReviewDiff', (item?: PendingReviewItem) =>
+  const showReviewChangesCmd = registerCommand('gitlabMr.showPendingReviewChanges', loadReviewChanges);
+  const openReviewDiffCmd = registerCommand('gitlabMr.openReviewDiff', (item?: PendingReviewItem) =>
     runReviewAction('打开 MR 文件 Diff 失败', async () => {
       if (!item) {
         throw new Error('请选择 MR 变更文件。');
@@ -73,7 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
       await pendingReviews.openDiff(item);
     })
   );
-  const approveReviewCmd = vscode.commands.registerCommand('gitlabMr.approvePendingReview', (item?: PendingReviewItem) =>
+  const approveReviewCmd = registerCommand('gitlabMr.approvePendingReview', (item?: PendingReviewItem) =>
     runReviewAction('批准 MR 失败', async () => {
       if (!item) {
         throw new Error('请选择待审批 MR。');
@@ -84,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-  const openPendingReviewCmd = vscode.commands.registerCommand('gitlabMr.openPendingReview', async (item?: PendingReviewItem) => {
+  const openPendingReviewCmd = registerCommand('gitlabMr.openPendingReview', async (item?: PendingReviewItem) => {
     try {
       const url = item?.request?.web_url;
       if (!url || !/^https?:\/\//i.test(url)) {
@@ -93,6 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!await vscode.env.openExternal(vscode.Uri.parse(url))) {
         throw new Error('无法打开浏览器中的 MR 页面。');
       }
+      await Audit.event('review.open-browser', { project: item?.request?.project_id, mr: item?.request?.iid, source: 'command' });
     } catch (error) {
       Logger.error('打开待审批 MR 失败', error);
       vscode.window.showErrorMessage(`打开待审批 MR 失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -124,6 +161,10 @@ export function activate(context: vscode.ExtensionContext) {
     pendingVisibility, pendingConnectionChanged,
     context.secrets.onDidChange(event => {
       if (event.key === 'gitlabMr.personalAccessToken') {
+        void Audit.event('token.observed', { source: 'configuration' }, 'sensitive').catch(error => {
+          Logger.error('凭据变更审计失败', error);
+          vscode.window.showErrorMessage('凭据已经变更，但审计写入失败；敏感操作已暂停。');
+        });
         pendingReviews.reset();
         pendingTreeView.description = undefined;
         if (pendingTreeView.visible) {
@@ -143,7 +184,7 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: releaseProvider,
     showCollapseAll: true
   });
-  const filterBranchesByKeywordCmd = vscode.commands.registerCommand('gitlabMr.filterBranchesByKeyword', async () => {
+  const filterBranchesByKeywordCmd = registerCommand('gitlabMr.filterBranchesByKeyword', async () => {
     try {
       await handleFilterBranchesByKeyword(releaseProvider, async () => {
         await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false });
@@ -153,7 +194,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage(`搜索远程分支失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
-  const retryBranchesCmd = vscode.commands.registerCommand('gitlabMr.retryBranches', async () => {
+  const retryBranchesCmd = registerCommand('gitlabMr.retryBranches', async () => {
     try {
       await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false });
     } catch (error) {
@@ -161,7 +202,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showErrorMessage(`加载分支失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
-  const loadMoreReleaseCmd = vscode.commands.registerCommand('gitlabMr.loadMoreReleaseData', async (item: ReleaseReadinessTreeItem) => {
+  const loadMoreReleaseCmd = registerCommand('gitlabMr.loadMoreReleaseData', async (item: ReleaseReadinessTreeItem) => {
     try {
       await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectedBranch: item.branchPath, loadMoreRelease: true });
     } catch (error) {
@@ -170,7 +211,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  const filterReleaseBranchesCmd = vscode.commands.registerCommand('gitlabMr.filterReleaseBranches', async () => {
+  const filterReleaseBranchesCmd = registerCommand('gitlabMr.filterReleaseBranches', async () => {
     const currentFilters = releaseProvider.getBranchFilters();
     const choices = Array.from(new Set([...commonBranchFilters, ...(currentFilters ?? [])]));
     const selection = await vscode.window.showQuickPick(
@@ -202,29 +243,29 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   // 1. 打开可视化设置面板
-  const openSettingsCmd = vscode.commands.registerCommand('gitlabMr.openSettings', () => {
+  const openSettingsCmd = registerCommand('gitlabMr.openSettings', () => {
     Logger.info('打开 GitLab MR 设置面板');
     vscode.commands.executeCommand('workbench.action.openSettings', '@id:gitlabMr.');
   });
 
-  const configureInstanceUrlCmd = vscode.commands.registerCommand('gitlabMr.configureInstanceUrl', () => {
+  const configureInstanceUrlCmd = registerCommand('gitlabMr.configureInstanceUrl', () => {
     Logger.info('打开 GitLab 实例地址设置项');
     vscode.commands.executeCommand('workbench.action.openSettings', '@id:gitlabMr.instanceUrl');
   });
 
   // 2. 注册查看控制台日志命令
-  const showLogsCmd = vscode.commands.registerCommand('gitlabMr.showLogs', () => {
+  const showLogsCmd = registerCommand('gitlabMr.showLogs', () => {
     Logger.show(true);
   });
 
   // 3. 注册设置 Token 命令
-  const setTokenCmd = vscode.commands.registerCommand('gitlabMr.setToken', async () => {
+  const setTokenCmd = registerCommand('gitlabMr.setToken', async () => {
     Logger.info('触发设置 Token 操作');
     await tokenManager.promptForToken();
   });
 
   // 4. 注册创建 Merge Request 命令
-  const createMrCmd = vscode.commands.registerCommand('gitlabMr.createMergeRequest', async () => {
+  const createMrCmd = registerCommand('gitlabMr.createMergeRequest', async () => {
     try {
       await handleCreateMergeRequest(tokenManager);
     } catch (error: any) {
@@ -241,7 +282,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  const checkReleaseCmd = vscode.commands.registerCommand('gitlabMr.checkReleaseReadiness', async (item?: ReleaseReadinessTreeItem) => {
+  const checkReleaseCmd = registerCommand('gitlabMr.checkReleaseReadiness', async (item?: ReleaseReadinessTreeItem) => {
     try {
       await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, {
         selectedBranch: item?.branchPath
@@ -259,7 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  const refreshReleaseCmd = vscode.commands.registerCommand('gitlabMr.refreshReleaseReadiness', async () => {
+  const refreshReleaseCmd = registerCommand('gitlabMr.refreshReleaseReadiness', async () => {
     try {
       await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, {
         selectedBranch: releaseProvider.selectedBranch,
@@ -273,7 +314,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  const createReleaseFeatureCmd = vscode.commands.registerCommand(
+  const createReleaseFeatureCmd = registerCommand(
     'gitlabMr.createReleaseFeatureMergeRequest',
     async (input: ReleaseReadinessTreeItem | ReleaseFeatureStatus) => {
       const status = input instanceof ReleaseReadinessTreeItem ? input.status : input;
@@ -299,7 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const createMainMrCmd = vscode.commands.registerCommand(
+  const createMainMrCmd = registerCommand(
     'gitlabMr.createMainMergeRequest',
     async (item?: ReleaseReadinessTreeItem) => {
       try {
@@ -314,7 +355,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const openReleaseMrCmd = vscode.commands.registerCommand(
+  const openReleaseMrCmd = registerCommand(
     'gitlabMr.openReleaseMergeRequest',
     async (input: ReleaseReadinessTreeItem | ReleaseFeatureStatus) => {
       const status = input instanceof ReleaseReadinessTreeItem ? input.status : input;
@@ -325,7 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const openConfiguredIssueLinkCmd = vscode.commands.registerCommand(
+  const openConfiguredIssueLinkCmd = registerCommand(
     'gitlabMr.openConfiguredIssueLink',
     async (url: string) => {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
@@ -334,7 +375,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const copyBranchNameCmd = vscode.commands.registerCommand(
+  const copyBranchNameCmd = registerCommand(
     'gitlabMr.copyBranchName',
     async (item?: ReleaseReadinessTreeItem) => {
       try {
@@ -348,7 +389,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const deleteBranchCmd = vscode.commands.registerCommand(
+  const deleteBranchCmd = registerCommand(
     'gitlabMr.deleteBranch',
     async (item?: ReleaseReadinessTreeItem) => {
       try {
@@ -485,10 +526,21 @@ export async function handleCopyBranchName(item?: ReleaseReadinessTreeItem): Pro
     throw new Error('请选择远程分支或 feature 分支结果，不能复制目录。');
   }
   await vscode.env.clipboard.writeText(branch);
+  await Audit.event('branch.copy', { branch, source: 'command' });
   vscode.window.showInformationMessage(`已复制分支名称: ${branch}`);
 }
 
 export async function handleDeleteBranch(
+  tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
+  provider: ReleaseReadinessProvider,
+  item?: ReleaseReadinessTreeItem
+): Promise<boolean> {
+  return Audit.operation('branch.delete', 'high', {
+    branch: item?.kind === 'branch' ? item.branchPath : item?.status?.branch, source: 'command'
+  }, () => deleteBranchAudited(tokenManager, provider, item));
+}
+
+async function deleteBranchAudited(
   tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
   provider: ReleaseReadinessProvider,
   item?: ReleaseReadinessTreeItem
@@ -515,6 +567,7 @@ export async function handleDeleteBranch(
   if (confirmation !== '删除远程分支') {
     return false;
   }
+  await Audit.note('confirmed', { branch });
   const token = await tokenManager.getToken() || await tokenManager.promptForToken();
   if (!token) {
     return false;
@@ -535,6 +588,7 @@ export async function handleDeleteBranch(
       }
       const service = new GitLabService(instanceUrl, token);
       const project = await service.getProject(repoInfo.projectPath);
+      await Audit.note('confirmed', { ...service.auditContext, project: project.id, branch });
       // Never authorize deletion from the cached tree marker.
       provider.setBranchMergedIntoMain(branch, false);
       const { merged, commit, mainCommit } = await gitService.checkBranchForDeletion(branch);
@@ -558,6 +612,14 @@ async function handleCreateMergeRequest(
   tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
   presetBranches?: { sourceBranch: string; targetBranch?: string }
 ) {
+  return Audit.operation('mr.create', 'sensitive', { ...presetBranches, source: 'command' },
+    () => createMergeRequestAudited(tokenManager, presetBranches));
+}
+
+async function createMergeRequestAudited(
+  tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
+  presetBranches?: { sourceBranch: string; targetBranch?: string }
+) {
   Logger.info('===== 开始执行创建 Merge Request 流程 =====');
 
   // 1. 获取工作区目录
@@ -565,7 +627,8 @@ async function handleCreateMergeRequest(
   if (!workspaceFolders || workspaceFolders.length === 0) {
     Logger.warn('工作区未打开任何文件夹');
     vscode.window.showWarningMessage('请先在 VS Code 中打开一个 Git 项目工作区。');
-    return;
+    await Audit.note('blocked');
+    return false;
   }
   const rootPath = workspaceFolders[0].uri.fsPath;
   Logger.info(`当前工作区路径: ${rootPath}`);
@@ -576,7 +639,8 @@ async function handleCreateMergeRequest(
   if (!isGit) {
     Logger.warn(`工作区 ${rootPath} 不是有效的 Git 仓库`);
     vscode.window.showWarningMessage('当前工作区不是有效的 Git 仓库。');
-    return;
+    await Audit.note('blocked');
+    return false;
   }
 
   const repoInfo = await gitService.getRepoInfo();
@@ -634,13 +698,13 @@ async function handleCreateMergeRequest(
     );
     if (action === '打开可视化设置') {
       vscode.commands.executeCommand('workbench.action.openSettings', 'gitlabMr.accessToken');
-      return;
+      return false;
     } else if (action === '快速输入 Token') {
       token = await tokenManager.promptForToken();
     }
     if (!token) {
       Logger.warn('用户取消了 Token 输入');
-      return;
+      return false;
     }
   }
 
@@ -662,7 +726,7 @@ async function handleCreateMergeRequest(
   );
   if (!sourceBranch) {
     Logger.info('用户取消了选择源分支');
-    return;
+    return false;
   }
   Logger.info(`用户选择 MR 源分支: ${sourceBranch}`);
 
@@ -681,7 +745,8 @@ async function handleCreateMergeRequest(
       : `源分支 ${sourceBranch} 没有可选的目标分支，请检查分支列表和默认目标配置。`;
     Logger.warn(message);
     vscode.window.showWarningMessage(message);
-    return;
+    await Audit.note('blocked', { sourceBranch });
+    return false;
   }
   const selectedTarget = presetBranches?.targetBranch ?? (await vscode.window.showQuickPick(branchPicks, {
     placeHolder: hideNonConformingTargets
@@ -692,7 +757,7 @@ async function handleCreateMergeRequest(
 
   if (!selectedTarget) {
     Logger.info('用户取消了选择目标分支');
-    return;
+    return false;
   }
   Logger.info(`用户选择合并目标分支: ${selectedTarget}`);
 
@@ -734,8 +799,10 @@ async function handleCreateMergeRequest(
 
   if (!finalTitle) {
     Logger.info('用户取消了标题确认');
-    return;
+    return false;
   }
+  await Audit.note('confirmed', { instance: instanceUrl, project: repoInfo.projectPath,
+    sourceBranch, targetBranch: selectedTarget, removeSourceBranch, squash });
   Logger.info(`最终确认的 MR Title: "${finalTitle.trim()}"`);
 
   // 10. 弹出进度条并在后台执行 GitLab API 请求
