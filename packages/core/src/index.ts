@@ -4,3 +4,4 @@ export * from './releaseOverview';
 export * from './templateEngine';
 export * from './issueLinks';
 export * from './workbenchFilters';
+export * from './web';

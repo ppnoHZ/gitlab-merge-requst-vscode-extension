@@ -40,7 +40,7 @@ npm run dev
 
 可单独运行 `npm run dev:web` 或 `npm run dev:api`。API 使用 `HOST`、`PORT` 控制监听地址与端口；前端代理目标可通过 `API_PROXY_TARGET` 指定。默认只监听本机。
 
-已实现：Web 页面骨架、真实服务状态请求、API 健康检查、共享核心依赖。尚未实现 GitLab OAuth、项目查询、仓库拉取和 Web 上线检查任务；页面明确显示未连接，不使用演示项目或伪造发布数据。实施边界见 [Web 开发说明](docs/web-development.md)。
+已实现独立 Web GitLab 数据链路：OAuth 登录与刷新、会话、项目搜索、分支/MR 完整分页、后端 Git main 合入检查、总览筛选及导出。公司地址和 OAuth 字段按要求预留为空；复制 `apps/api/.env.example` 到 `apps/api/.env`，安全填写配置后重启即可接入。未配置时页面明确提示未配置。原 VS Code API 链路保持不变，配置步骤和实际联调边界见 [Web 开发说明](docs/web-development.md)。
 
 生产构建分别生成 `apps/web/dist` 和 `apps/api/dist`。使用 `npm run start --workspace=@gitlab-workbench/api` 启动 API；部署时需由反向代理提供前端静态文件并将 `/api` 转发到 API。开发用 Vite 服务器不作为生产服务器。
 
