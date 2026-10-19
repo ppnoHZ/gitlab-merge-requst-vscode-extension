@@ -161,7 +161,7 @@ async function runTests(): Promise<void> {
   assert.equal(calls.version, 2);
   assert.equal(calls.project, 3);
   assert.deepEqual(calls.mr, ['release/v1', 'release/v1']);
-  assert.deepEqual(calls.selected, ['release/v1', 'dev', 'dev', 'release/v1']);
+  assert.deepEqual(calls.selected, ['release/v1', 'dev', 'dev'], 'full refresh reuses batch result without a second selected-branch fetch');
   const refreshedDev = provider.getBranchItem('dev');
   assert.ok(refreshedDev);
   assert.deepEqual(provider.getChildren(refreshedDev), []);

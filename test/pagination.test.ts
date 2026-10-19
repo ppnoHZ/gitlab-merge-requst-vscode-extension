@@ -129,6 +129,8 @@ async function runTests() {
   assert.equal(provider.getBranches().length, 201);
   assert.equal(provider.isMergedIntoMain('feature/v1/PROJ-0'), false);
   assert.equal(provider.branchPage.error, undefined);
+  assert.match(String(provider.getBranchItem('feature/v1/PROJ-0')?.description), /main 合入状态未知/);
+  assert.ok(!provider.getBranchItem('feature/v1/PROJ-0')?.contextValue?.includes('canMergeToMain'));
   failMarkers = false;
 
   provider.resetBranchPages();

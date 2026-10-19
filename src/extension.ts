@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { GitService } from './gitService';
+import { GitService, MainMergeResult } from './gitService';
 import { GitLabService } from './gitlabService';
 import { TemplateEngine } from './templateEngine';
 import { TokenManager } from './tokenManager';
@@ -1086,7 +1086,9 @@ export async function handleCheckReleaseReadiness(
       return;
     }
     const branches = provider.getBranches();
+    let batchMainResult: MainMergeResult | undefined;
     if (loadingBranches && branches.length > 0) {
+      provider.setMainChecksUnknown(branches, '正在检查是否合入 main…');
       try {
         const merged = await vscode.window.withProgress(
           {
@@ -1099,12 +1101,13 @@ export async function handleCheckReleaseReadiness(
         if (provider.branchPage !== branchState) {
           return;
         }
-        provider.setMergedIntoMain(merged);
+        batchMainResult = merged;
+        provider.setMergedIntoMain(merged, merged.errors);
       } catch (error) {
         if (provider.branchPage !== branchState) {
           return;
         }
-        provider.setMergedIntoMain([]);
+        provider.setMainChecksUnknown(branches, `main 检查失败: ${error instanceof Error ? error.message : String(error)}`);
         Logger.error('更新分支 main 合入标记失败', error);
         vscode.window.showWarningMessage(
           `无法更新 main 合并标记（分支列表仍可使用）: ${error instanceof Error ? error.message : String(error)}`
@@ -1147,9 +1150,12 @@ export async function handleCheckReleaseReadiness(
       }
     };
     if (!options.loadMoreRelease) {
-      provider.setBranchMergedIntoMain(releaseBranch, false);
+      provider.setMainChecksUnknown([releaseBranch], '正在检查是否合入 main…');
       try {
-        const merged = await vscode.window.withProgress(
+        if (batchMainResult?.errors?.has(releaseBranch)) {
+          throw new Error(batchMainResult.errors.get(releaseBranch));
+        }
+        const merged = batchMainResult ? batchMainResult.has(releaseBranch) : await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
             title: `正在检查 ${releaseBranch} 是否已合入 main...`,
@@ -1168,6 +1174,7 @@ export async function handleCheckReleaseReadiness(
         if (provider.branchPage !== branchState) {
           return;
         }
+        provider.setMainChecksUnknown([releaseBranch], `main 检查失败: ${error instanceof Error ? error.message : String(error)}`);
         provider.setMainCheck(releaseBranch, `main 合入检查失败: ${error instanceof Error ? error.message : String(error)}`);
         Logger.error(`检查 ${releaseBranch} 合入 main 状态失败`, error);
         vscode.window.showWarningMessage(

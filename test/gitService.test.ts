@@ -58,6 +58,10 @@ async function runTests(): Promise<void> {
     git(root, 'clone', '-b', 'main', remote, checkout);
 
     const service = new GitService(checkout);
+    const commands: string[][] = [];
+    const instrumented = service as unknown as { runGit(args: string[], conflict?: boolean): Promise<string> };
+    const runGit = instrumented.runGit.bind(service);
+    instrumented.runGit = (args, conflict) => { commands.push(args); return runGit(args, conflict); };
     const branches = [
       'main', 'feature/normal', 'feature/squash', 'feature/rebase',
       'bugfix/pending', 'release/conflict', 'same-as-main'
@@ -74,6 +78,21 @@ async function runTests(): Promise<void> {
     assert.equal(git(checkout, 'status', '--porcelain'), statusBefore);
     assert.equal(git(checkout, 'rev-parse', 'HEAD'), headBefore);
     assert.equal(readFileSync(path.join(checkout, 'base.txt'), 'utf8'), 'local uncommitted change\n');
+
+    assert.equal(commands.filter(args => args[0] === 'merge-tree').length, 4,
+      'ordinary merges and identical tips should bypass merge simulation');
+    commands.length = 0;
+    await Promise.all([
+      service.getBranchesMergedIntoMain(branches),
+      service.getBranchesMergedIntoMain([...branches].reverse())
+    ]);
+    assert.equal(commands.filter(args => args[0] === 'fetch').length, 1, 'coalesce simultaneous identical checks');
+    assert.equal(commands.filter(args => args[0] === 'merge-tree').length, 0, 'unchanged SHAs reuse comparisons');
+    commitFile('main-later.txt', 'main advanced after cache\n');
+    git(seed, 'push', 'origin', 'main');
+    commands.length = 0;
+    assert.equal((await service.getBranchesMergedIntoMain(branches)).has('feature/squash'), true);
+    assert.equal(commands.filter(args => args[0] === 'merge-tree').length, 4, 'new main SHA invalidates comparisons');
 
     git(seed, 'switch', 'feature/squash');
     commitFile('squash-new.txt', 'new changes after merge\n');
@@ -101,7 +120,45 @@ async function runTests(): Promise<void> {
     assert.equal(refreshed.has('main'), false);
     assert.equal(refreshed.has('feature/normal'), false);
     await assert.rejects(service.getBranchesMergedIntoMain(['feature/normal']), /没有 main/);
-    await assert.rejects(service.getBranchesMergedIntoMain(['main', 'missing']), /获取远程分支引用失败/);
+    const partial = await service.getBranchesMergedIntoMain(['main', 'missing', 'feature/rebase']);
+    assert.equal(partial.has('feature/rebase'), true);
+    assert.match(partial.errors?.get('missing') ?? '', /获取远程分支引用失败/);
+    assert.equal(partial.has('missing'), false);
+    await assert.rejects(service.checkBranchForDeletion('missing'));
+    // Exercise isolated failures and the worker bound without relying on wall-clock timings.
+    const faultService = new GitService(path.join(root, 'fault-check'));
+    const faultRunner = faultService as unknown as { runGit(args: string[]): Promise<string> };
+    let active = 0;
+    let peak = 0;
+    let failComparison = true;
+    let failedAttempts = 0;
+    faultRunner.runGit = async args => {
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'rev-parse') return 'main-tree';
+      if (args[0] === 'for-each-ref') {
+        return args.some(arg => arg.startsWith('--merged=')) ? ''
+          : ['main main-sha', ...Array.from({ length: 9 }, (_, i) => `branch-${i} sha-${i}`)].join('\n');
+      }
+      assert.equal(args[0], 'merge-tree');
+      active++;
+      peak = Math.max(peak, active);
+      await Promise.resolve();
+      active--;
+      if (args.at(-1) === 'sha-0') {
+        failedAttempts++;
+        if (failComparison) throw new Error('Object temporarily unavailable');
+      }
+      return 'main-tree';
+    };
+    const faultBranches = ['main', ...Array.from({ length: 9 }, (_, i) => `branch-${i}`)];
+    const faultResult = await faultService.getBranchesMergedIntoMain(faultBranches);
+    assert.equal(faultResult.size, 8);
+    assert.equal(faultResult.errors?.get('branch-0'), 'Object temporarily unavailable');
+    assert(peak > 1 && peak <= 4, `expected bounded concurrency, got ${peak}`);
+    failComparison = false;
+    assert.equal((await faultService.getBranchesMergedIntoMain(faultBranches)).size, 9);
+    assert.equal(failedAttempts, 2, 'failed comparisons must be retried, not cached as unmerged');
+
     git(checkout, 'remote', 'remove', 'origin');
     await assert.rejects(service.getBranchesMergedIntoMain(branches), /origin/);
     console.log('[PASS] main merge checks: normal/squash/rebase, pending/conflicts, fresh remote refs, unchanged worktree, errors');

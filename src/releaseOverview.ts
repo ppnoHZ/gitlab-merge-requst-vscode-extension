@@ -1,5 +1,6 @@
 import { getReleaseFeatureStatuses, getReleaseVersion, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { GitLabPage } from './types';
+import type { MainMergeResult } from './gitService';
 
 export interface ReleaseOverviewEntry {
   branch: string;
@@ -17,7 +18,7 @@ export interface ReleaseOverviewSnapshot {
 export interface ReleaseOverviewSource {
   branches(page: number): Promise<GitLabPage<string>>;
   requests(branch: string, page: number): Promise<GitLabPage<ReleaseMergeRequest>>;
-  mergedIntoMain(branches: string[]): Promise<Set<string>>;
+  mergedIntoMain(branches: string[]): Promise<MainMergeResult>;
 }
 
 async function allPages<T>(fetch: (page: number) => Promise<GitLabPage<T>>): Promise<T[]> {
@@ -48,7 +49,11 @@ export async function loadReleaseOverview(project: string, source: ReleaseOvervi
     try {
       if (!branches.includes('main')) throw new Error('远程仓库没有 main 分支');
       const merged = await source.mergedIntoMain(['main', ...releases]);
-      for (const entry of entries) entry.mergedIntoMain = merged.has(entry.branch);
+      for (const entry of entries) {
+        const error = merged.errors?.get(entry.branch);
+        if (error) entry.mainError = error;
+        else entry.mergedIntoMain = merged.has(entry.branch);
+      }
     } catch (error) {
       for (const entry of entries) entry.mainError = error instanceof Error ? error.message : String(error);
     }

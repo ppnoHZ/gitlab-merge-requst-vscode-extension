@@ -76,6 +76,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private readonly statuses = new Map<string, ReleaseFeatureStatus[] | string>();
   private readonly mainChecks = new Map<string, string>();
   private mergedIntoMain = new Set<string>();
+  private readonly unknownMainChecks = new Map<string, string>();
   private branchFilters: string[] | null;
   private branchKeyword = '';
   branchPage: BranchPageState = { page: 0, hasMore: true, loading: false };
@@ -111,6 +112,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     this.latestCommits.clear();
     this.stopDurationTimer();
     this.mergedIntoMain.clear();
+    this.unknownMainChecks.clear();
     this.clearChecks();
   }
 
@@ -122,6 +124,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     state.hasMore = page.hasMore;
     state.error = undefined;
     this.updateLatestCommits(page);
+    this.setMainChecksUnknown(page.items, '正在加载分支，尚未检查 main 合入状态');
     this.setBranches([...this.branches, ...page.items]);
   }
 
@@ -419,6 +422,12 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   }
 
   private markMergedIntoMain(item: ReleaseReadinessTreeItem, branch: string): void {
+    const unknown = this.unknownMainChecks.get(branch);
+    if (branch !== 'main' && unknown) {
+      item.description = [item.description, 'main 合入状态未知'].filter(Boolean).join(' · ');
+      item.tooltip = `${item.tooltip}\n${unknown}`;
+      return;
+    }
     if (branch !== 'main' && !this.mergedIntoMain.has(branch)) {
       item.contextValue = `${item.contextValue ?? 'remoteBranch'}-canMergeToMain`;
     }
@@ -434,7 +443,17 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     }
   }
 
-  setMergedIntoMain(branches: Iterable<string>): void {
+  setMainChecksUnknown(branches: Iterable<string>, message: string): void {
+    for (const branch of branches) {
+      this.mergedIntoMain.delete(branch);
+      this.unknownMainChecks.set(branch, message);
+    }
+    this.refresh();
+  }
+
+  setMergedIntoMain(branches: Iterable<string>, errors: Map<string, string> = new Map()): void {
+    this.unknownMainChecks.clear();
+    for (const [branch, error] of errors) this.unknownMainChecks.set(branch, error);
     this.mergedIntoMain = new Set(branches);
     this.changeEmitter.fire(undefined);
   }
@@ -444,6 +463,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   }
 
   setBranchMergedIntoMain(branch: string, merged: boolean): void {
+    this.unknownMainChecks.delete(branch);
     if (merged) {
       this.mergedIntoMain.add(branch);
     } else {

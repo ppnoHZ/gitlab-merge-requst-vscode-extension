@@ -4,13 +4,20 @@ import * as vscode from 'vscode';
 import { GitCommitInfo, GitRepoInfo } from './types';
 import { Logger } from './logger';
 
+export interface MainMergeResult extends Set<string> {
+  errors?: Map<string, string>;
+}
+
 export class GitService {
+  // Cache immutable commit pairs, never branch names or timed freshness guesses.
+  private static readonly mergeCache = new Map<string, Promise<boolean>>();
+  private static readonly checks = new Map<string, Promise<MainMergeResult>>();
   constructor(private readonly workspaceRoot: string) {}
 
   private runGit(args: string[], mergeConflictExpected = false): Promise<string> {
     return new Promise((resolve, reject) => {
       Logger.info(`[执行 Git 命令] git ${args.join(' ')} (cwd: ${this.workspaceRoot})`);
-      execFile('git', args, { cwd: this.workspaceRoot }, (error, stdout, stderr) => {
+      execFile('git', args, { cwd: this.workspaceRoot, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
           if (mergeConflictExpected && error.code === 1) {
             Logger.info('[main 合并检查] 存在合并冲突，不标记为已合入 main');
@@ -78,6 +85,7 @@ export class GitService {
 
   async isBranchMergedIntoMain(branch: string): Promise<boolean> {
     const merged = await this.getBranchesMergedIntoMain(['main', branch], false);
+    if (merged.errors?.has(branch)) throw new Error(merged.errors.get(branch));
     return merged.has(branch);
   }
 
@@ -91,14 +99,21 @@ export class GitService {
     return { merged: result.merged.has(branch), commit, mainCommit };
   }
 
-  async getBranchesMergedIntoMain(branchNames: string[], fetchAll = true): Promise<Set<string>> {
-    return (await this.checkBranchesMergedIntoMain(branchNames, fetchAll)).merged;
+  async getBranchesMergedIntoMain(branchNames: string[], fetchAll = true): Promise<MainMergeResult> {
+    const key = JSON.stringify([path.resolve(this.workspaceRoot), fetchAll, [...new Set(branchNames)].sort()]);
+    const existing = GitService.checks.get(key);
+    if (existing) return existing;
+    const check = this.checkBranchesMergedIntoMain(branchNames, fetchAll, true).then(result => result.merged);
+    GitService.checks.set(key, check);
+    try { return await check; }
+    finally { if (GitService.checks.get(key) === check) GitService.checks.delete(key); }
   }
 
   private async checkBranchesMergedIntoMain(
     branchNames: string[],
-    fetchAll: boolean
-  ): Promise<{ merged: Set<string>; commits: Map<string, string> }> {
+    fetchAll: boolean,
+    tolerateBranchErrors = false
+  ): Promise<{ merged: MainMergeResult; commits: Map<string, string> }> {
     if (!branchNames.includes('main')) {
       throw new Error('远程仓库没有 main 分支，无法检查代码是否已合入 main。');
     }
@@ -119,23 +134,49 @@ export class GitService {
       throw new Error('获取远程 main 引用失败，无法检查合并状态。');
     }
     const mainTree = await this.runGit(['rev-parse', `${mainCommit}^{tree}`]);
-    const mergedBranches = new Set<string>();
-    for (const branch of branchNames) {
-      if (branch === 'main') {
-        continue;
+    // One graph traversal recognizes ordinary merges before trying squash/rebase comparisons.
+    const ancestors = new Set((await this.runGit([
+      'for-each-ref', `--merged=${mainCommit}`, '--format=%(objectname)', 'refs/remotes/origin/'
+    ])).split('\n'));
+    const mergedBranches: MainMergeResult = new Set<string>();
+    mergedBranches.errors = new Map();
+    const pending = [...new Set(branchNames)].filter(branch => branch !== 'main');
+    const checkBranch = async (branch: string) => {
+      try {
+        const commit = commits.get(branch);
+        if (!commit) throw new Error(`获取远程分支引用失败: ${branch}，请刷新后重试。`);
+        if (ancestors.has(commit)) {
+          mergedBranches.add(branch);
+          return;
+        }
+        const key = JSON.stringify([path.resolve(this.workspaceRoot), mainCommit, commit]);
+        let comparison = GitService.mergeCache.get(key);
+        if (!comparison) {
+          // Fixed SHAs keep this result valid even if another view fetches newer refs.
+          comparison = this.runGit([
+            'merge-tree', '--write-tree', '--no-messages', mainCommit, commit
+          ], true).then(tree => tree === mainTree);
+          GitService.mergeCache.set(key, comparison);
+          if (GitService.mergeCache.size > 4096) {
+            GitService.mergeCache.delete(GitService.mergeCache.keys().next().value!);
+          }
+        }
+        try {
+          if (await comparison) mergedBranches.add(branch);
+        } catch (error) {
+          GitService.mergeCache.delete(key);
+          throw error;
+        }
+      } catch (error) {
+        if (!tolerateBranchErrors) throw error;
+        mergedBranches.errors!.set(branch, error instanceof Error ? error.message : String(error));
       }
-      const commit = commits.get(branch);
-      if (!commit) {
-        throw new Error(`获取远程分支引用失败: ${branch}，请刷新后重试。`);
-      }
-      // Compare the simulated merge tree, so squash/rebase and later main-only changes are supported.
-      const mergedTree = await this.runGit([
-        'merge-tree', '--write-tree', '--no-messages', mainCommit, commit
-      ], true);
-      if (mergedTree === mainTree) {
-        mergedBranches.add(branch);
-      }
-    }
+    };
+    // Bound process count; a large repository must not spawn one process per branch at once.
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+      while (cursor < pending.length) await checkBranch(pending[cursor++]);
+    }));
     return { merged: mergedBranches, commits };
   }
 

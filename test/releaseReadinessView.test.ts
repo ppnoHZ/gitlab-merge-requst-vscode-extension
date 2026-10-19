@@ -317,7 +317,7 @@ commitProvider.appendBranchPage(commitProvider.branchPage, {
     { branch: commitBranch, authorName: 'Alice', committedDate: commitDate }
   ]
 });
-assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Alice · ${localTime} · 5分钟前更新`);
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Alice · ${localTime} · 5分钟前更新 · main 合入状态未知`);
 assert.equal(commitProvider.getBranchItem('main')?.description, `Main Author · ${localTime} · 5分钟前更新`);
 assert.equal(commitProvider.getChildren().find(item => item.kind === 'directory')?.description, undefined);
 commitProvider.setBranches(commitProvider.getBranches(), commitBranch);
@@ -365,7 +365,7 @@ commitProvider.appendBranchPage(staleBranchPage, {
   latestCommits: [{ branch: commitBranch, authorName: 'Stale', committedDate: commitDate }]
 });
 commitProvider.appendBranchPage(commitProvider.branchPage, { items: [commitBranch], hasMore: false });
-assert.equal(commitProvider.getBranchItem(commitBranch)?.description, undefined);
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, 'main 合入状态未知');
 commitProvider.dispose();
 Date.now = originalNow;
 console.log('[PASS] latest branch commit: authors, local times, tooltips, state markers, release pages, invalid data, stale responses and reset');

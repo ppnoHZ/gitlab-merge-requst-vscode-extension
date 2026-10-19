@@ -77,6 +77,17 @@ async function run() {
   assert.equal(partial.entries[0].error, 'Page 2 failed');
   assert.equal(partial.entries[0].mainError, 'Fetch failed');
 
+  const isolatedMainFailure = await loadReleaseOverview('p', {
+    branches: async () => ({ items: ['main', 'release/v1', 'release/v2'], hasMore: false }),
+    requests: async () => ({ items: [], hasMore: false }),
+    mergedIntoMain: async () => Object.assign(new Set(['release/v2']), {
+      errors: new Map([['release/v1', 'Object unavailable']])
+    })
+  });
+  assert.equal(isolatedMainFailure.entries[0].mergedIntoMain, undefined);
+  assert.equal(isolatedMainFailure.entries[0].mainError, 'Object unavailable');
+  assert.equal(isolatedMainFailure.entries[1].mergedIntoMain, true);
+
   const failure = new ReleaseOverviewProvider(async () => { throw new Error('Branch page failed'); });
   await failure.refresh();
   assert.equal(failure.snapshot, undefined);
