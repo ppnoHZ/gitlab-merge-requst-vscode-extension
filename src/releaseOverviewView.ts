@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { WorkbenchFilters, RiskFilter, normalizeFilters, matchesUpdated, hasFilters, filterDescription } from './workbenchFilters';
 import { ReleaseReadinessTreeItem } from './releaseReadinessView';
 import { ReleaseOverviewEntry, ReleaseOverviewSnapshot, featureStateLabels, releaseOverviewMarkdown, summarizeRelease } from './releaseOverview';
 
@@ -15,6 +16,33 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
   message = '点击刷新，加载当前项目的上线总览';
   loading = false;
   private generation = 0;
+  private filters = normalizeFilters();
+  getFilters(): WorkbenchFilters { return normalizeFilters(this.filters); }
+  setFilters(filters: Partial<WorkbenchFilters>): void {
+    this.filters = normalizeFilters(filters);
+    this.emitter.fire(undefined);
+  }
+  get filterSummary(): string {
+    return `已筛选 ${this.getVisibleEntries().length} / ${this.snapshot?.entries.length ?? 0} 个 release`;
+  }
+  get filterTooltip(): string { return filterDescription(this.filters); }
+  get hasDisplayFilters(): boolean { return hasFilters(this.filters); }
+  getVisibleEntries(now = Date.now()): ReleaseOverviewEntry[] {
+    return (this.snapshot?.entries ?? []).filter(entry => {
+      const main = entry.mergedIntoMain === undefined ? 'unknown' : entry.mergedIntoMain ? 'merged' : 'unmerged';
+      if (this.filters.main.length && !this.filters.main.includes(main)) return false;
+      if (!matchesUpdated(entry.committedDate, this.filters.updated, now)) return false;
+      const risks = new Set<RiskFilter>();
+      if (entry.error || entry.mainError) risks.add('failed');
+      if (!entry.error) {
+        const counts = summarizeRelease(entry);
+        if (counts['not-created']) risks.add('missing');
+        if (counts.closed) risks.add('closed');
+        if (counts.open) risks.add('open');
+      }
+      return !this.filters.risks.length || this.filters.risks.some(risk => risks.has(risk));
+    });
+  }
 
   constructor(private readonly load: () => Promise<ReleaseOverviewSnapshot | undefined>) {}
   invalidate(): void {
@@ -50,8 +78,14 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
   getChildren(parent?: ReleaseOverviewItem): ReleaseOverviewItem[] {
     if (parent) return parent.children;
     if (!this.snapshot || !this.snapshot.entries.length) return [new ReleaseOverviewItem(this.message)];
+    const visible = this.getVisibleEntries();
+    if (!visible.length) {
+      const empty = new ReleaseOverviewItem('没有匹配的上线分支，点击清除筛选');
+      empty.command = { command: 'gitlabMr.clearReleaseOverviewFilters', title: '清除筛选' };
+      return [empty];
+    }
     const versions = new Map<string, ReleaseOverviewEntry[]>();
-    for (const entry of this.snapshot.entries) versions.set(entry.version, [...(versions.get(entry.version) ?? []), entry]);
+    for (const entry of visible) versions.set(entry.version, [...(versions.get(entry.version) ?? []), entry]);
     return [new ReleaseOverviewItem(`${this.snapshot.project} · ${new Date(this.snapshot.updatedAt).toLocaleString()}`),
       ...Array.from(versions, ([version, entries]) => new ReleaseOverviewItem(version, entries.map(entry => this.releaseItem(entry))))];
   }
@@ -92,10 +126,23 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
     item.iconPath = new vscode.ThemeIcon(entry.error || entry.mainError ? 'question' : counts.open + counts.closed + counts['not-created'] ? 'warning' : 'git-branch');
     return item;
   }
-  async export(): Promise<void> {
+  async export(scope: 'all' | 'filtered' = 'all'): Promise<void> {
     if (!this.snapshot) { vscode.window.showWarningMessage('请先刷新并加载上线总览。'); return; }
-    const document = await vscode.workspace.openTextDocument({ language: 'markdown', content: releaseOverviewMarkdown(this.snapshot) });
+    const entries = scope === 'filtered' ? this.getVisibleEntries() : this.snapshot.entries;
+    const scopeLabel = scope === 'filtered' ? `当前筛选（${entries.length}/${this.snapshot.entries.length} 个 release）；${this.filterTooltip}` : '全部';
+    let content = releaseOverviewMarkdown({ ...this.snapshot, entries })
+      .replace('# 上线总览\n', `# 上线总览\n\n导出范围：${scopeLabel}\n`);
+    if (scope === 'filtered' && !entries.length) content = content.replace('未发现 release/<版本> 分支。', '当前筛选没有匹配的 release 分支。');
+    const document = await vscode.workspace.openTextDocument({ language: 'markdown', content });
     await vscode.window.showTextDocument(document);
+  }
+  async promptExport(): Promise<void> {
+    if (!this.snapshot) { await this.export(); return; }
+    const selection = await vscode.window.showQuickPick([
+      { label: '导出全部', scope: 'all' as const },
+      { label: '导出当前筛选结果', scope: 'filtered' as const }
+    ], { title: '导出上线变更清单', placeHolder: this.filterSummary });
+    if (selection) await this.export(selection.scope);
   }
   dispose(): void { this.generation++; this.emitter.dispose(); }
 }

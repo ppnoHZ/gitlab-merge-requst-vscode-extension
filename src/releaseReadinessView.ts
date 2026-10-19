@@ -3,6 +3,7 @@ import { getReleaseFeatureStatuses, ReleaseFeatureState, ReleaseFeatureStatus, R
 import { BranchLatestCommit, GitLabBranchPage, GitLabPage } from './types';
 import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
 import { Logger } from './logger';
+import { WorkbenchFilters, MainFilter, normalizeFilters, matchesUpdated, hasFilters, filterDescription } from './workbenchFilters';
 
 type ReleaseTreeItemKind = 'search' | 'loadMore' | 'directory' | 'branch' | 'feature' | 'issueLink' | 'message';
 
@@ -78,6 +79,8 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private mergedIntoMain = new Set<string>();
   private readonly unknownMainChecks = new Map<string, string>();
   private branchFilters: string[] | null;
+  private filters = normalizeFilters();
+  private readonly knownMainChecks = new Set<string>();
   private branchKeyword = '';
   branchPage: BranchPageState = { page: 0, hasMore: true, loading: false };
   readonly releasePages = new Map<string, ReleasePageState>();
@@ -86,6 +89,27 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
 
   constructor(branchFilters: string[] | null = commonBranchFilters) {
     this.branchFilters = branchFilters === null || branchFilters.length === 0 ? null : [...branchFilters];
+  }
+
+  getFilters(): WorkbenchFilters { return normalizeFilters(this.filters); }
+  setFilters(filters: Partial<WorkbenchFilters>): void {
+    this.filters = normalizeFilters({ ...filters, risks: [] });
+    this.refresh();
+  }
+  get filterSummary(): string {
+    return `已筛选 ${this.getVisibleBranches().length} / ${this.branches.length} 个分支${this.branchPage.hasMore ? '（已加载）' : ''}`;
+  }
+  get filterTooltip(): string { return filterDescription(this.filters); }
+  get hasDisplayFilters(): boolean { return hasFilters(this.filters); }
+  getMainState(branch: string): MainFilter {
+    if (branch === 'main' || this.mergedIntoMain.has(branch)) return 'merged';
+    return !this.knownMainChecks.has(branch) || this.unknownMainChecks.has(branch) ? 'unknown' : 'unmerged';
+  }
+  getVisibleBranches(now = Date.now()): string[] {
+    return this.branches.filter(branch =>
+      (this.branchFilters === null || this.branchFilters.some(filter => filter.endsWith('/') ? branch.startsWith(filter) : branch === filter)) &&
+      (!this.filters.main.length || this.filters.main.includes(this.getMainState(branch))) &&
+      matchesUpdated(this.latestCommits.get(branch)?.committedDate, this.filters.updated, now));
   }
 
   getBranchFilters(): string[] | null {
@@ -113,6 +137,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     this.stopDurationTimer();
     this.mergedIntoMain.clear();
     this.unknownMainChecks.clear();
+    this.knownMainChecks.clear();
     this.clearChecks();
   }
 
@@ -207,7 +232,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
           vscode.TreeItemCollapsibleState.None
         );
         message.command = {
-          command: this.branchKeyword ? 'gitlabMr.filterBranchesByKeyword' : 'gitlabMr.filterReleaseBranches',
+          command: this.hasDisplayFilters ? 'gitlabMr.filterBranchStatus' : this.branchKeyword ? 'gitlabMr.filterBranchesByKeyword' : 'gitlabMr.filterReleaseBranches',
           title: '过滤远程分支'
         };
         items.push(message);
@@ -349,12 +374,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private getBranchChildren(prefix = ''): ReleaseReadinessTreeItem[] {
     const pathPrefix = prefix ? `${prefix}/` : '';
     const children = new Map<string, boolean>();
-    for (const branch of this.branches) {
-      if (this.branchFilters !== null && !this.branchFilters.some(filter =>
-        filter.endsWith('/') ? branch.startsWith(filter) : branch === filter
-      )) {
-        continue;
-      }
+    for (const branch of this.getVisibleBranches()) {
       if (!branch.startsWith(pathPrefix)) {
         continue;
       }
@@ -453,6 +473,8 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
 
   setMergedIntoMain(branches: Iterable<string>, errors: Map<string, string> = new Map()): void {
     this.unknownMainChecks.clear();
+    this.knownMainChecks.clear();
+    for (const branch of this.branches) this.knownMainChecks.add(branch);
     for (const [branch, error] of errors) this.unknownMainChecks.set(branch, error);
     this.mergedIntoMain = new Set(branches);
     this.changeEmitter.fire(undefined);
@@ -464,6 +486,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
 
   setBranchMergedIntoMain(branch: string, merged: boolean): void {
     this.unknownMainChecks.delete(branch);
+    this.knownMainChecks.add(branch);
     if (merged) {
       this.mergedIntoMain.add(branch);
     } else {
@@ -495,6 +518,8 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     // Invalidate in-flight reads so they cannot restore deleted branches.
     this.branchPage = { ...this.branchPage, loading: false };
     this.mergedIntoMain.delete(branch);
+    this.knownMainChecks.delete(branch);
+    this.unknownMainChecks.delete(branch);
     this.latestCommits.delete(branch);
     this.releasePages.delete(branch);
     this.checkingBranches.delete(branch);

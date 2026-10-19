@@ -54,7 +54,7 @@ async function run() {
   assert(report.includes('MR 状态未知：Access denied'));
   assert(!report.includes('<script>'));
   await provider.export();
-  assert.equal(openedDocuments.at(-1)?.content, report);
+  assert.equal(openedDocuments.at(-1)?.content, report.replace('# 上线总览\n', '# 上线总览\n\n导出范围：全部\n'));
 
   const missingMain = await loadReleaseOverview('p', {
     branches: async () => ({ items: ['release/v1'], hasMore: false }),

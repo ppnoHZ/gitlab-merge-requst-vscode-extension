@@ -13,6 +13,7 @@ import { Audit, AuditStore } from './audit';
 import { registerAuditView } from './auditView';
 import { loadReleaseOverview } from './releaseOverview';
 import { ReleaseOverviewProvider } from './releaseOverviewView';
+import { WorkbenchFilters, pickWorkbenchFilters } from './workbenchFilters';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -73,13 +74,30 @@ export async function activate(context: vscode.ExtensionContext) {
       mergedIntoMain: branches => git.getBranchesMergedIntoMain(branches, false)
     });
   });
+  const overviewFilterKey = 'gitlabMr.releaseOverviewFilters';
+  overview.setFilters(context.workspaceState.get<WorkbenchFilters>(overviewFilterKey, { main: [], risks: [], updated: 'all' }));
   const overviewTree = vscode.window.createTreeView('gitlabMr.releaseOverview', {
     treeDataProvider: overview, showCollapseAll: true
   });
   const refreshOverview = () => overview.refresh();
   context.subscriptions.push(overview, overviewTree,
     registerCommand('gitlabMr.refreshReleaseOverview', refreshOverview),
-    registerCommand('gitlabMr.exportReleaseOverview', () => overview.export()),
+    registerCommand('gitlabMr.exportReleaseOverview', () => overview.promptExport()),
+    registerCommand('gitlabMr.filterReleaseOverview', async () => {
+      const filters = await pickWorkbenchFilters(overview.getFilters(), true);
+      if (filters) {
+        await context.workspaceState.update(overviewFilterKey, filters);
+        overview.setFilters(filters);
+      }
+    }),
+    registerCommand('gitlabMr.clearReleaseOverviewFilters', async () => {
+      await context.workspaceState.update(overviewFilterKey, undefined);
+      overview.setFilters({});
+    }),
+    overview.onDidChangeTreeData(() => {
+      overviewTree.description = overview.snapshot ? overview.filterSummary : undefined;
+      overviewTree.title = overview.hasDisplayFilters ? `上线总览 · ${overview.filterTooltip}` : '上线总览';
+    }),
     overviewTree.onDidChangeVisibility(event => {
       if (event.visible && !overview.snapshot) void refreshOverview();
     }),
@@ -227,6 +245,26 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: releaseProvider,
     showCollapseAll: true
   });
+  const branchStatusFilterKey = 'gitlabMr.branchStatusFilters';
+  releaseProvider.setFilters(context.workspaceState.get<WorkbenchFilters>(branchStatusFilterKey, { main: [], risks: [], updated: 'all' }));
+  context.subscriptions.push(
+    registerCommand('gitlabMr.filterBranchStatus', async () => {
+      const filters = await pickWorkbenchFilters(releaseProvider.getFilters(), false);
+      if (filters) {
+        await context.workspaceState.update(branchStatusFilterKey, filters);
+        releaseProvider.setFilters(filters);
+      }
+    }),
+    registerCommand('gitlabMr.clearBranchStatusFilters', async () => {
+      await context.workspaceState.update(branchStatusFilterKey, undefined);
+      releaseProvider.setFilters({});
+    }),
+    releaseProvider.onDidChangeTreeData(() => {
+      releaseTreeView.description = releaseProvider.hasDisplayFilters
+        ? releaseProvider.filterSummary : `${releaseProvider.getBranches().length} 个远程分支`;
+      releaseTreeView.title = releaseProvider.hasDisplayFilters ? `分支管理 · ${releaseProvider.filterTooltip}` : '分支管理';
+    })
+  );
   const filterBranchesByKeywordCmd = registerCommand('gitlabMr.filterBranchesByKeyword', async () => {
     try {
       await handleFilterBranchesByKeyword(releaseProvider, async () => {
@@ -437,7 +475,7 @@ export async function activate(context: vscode.ExtensionContext) {
     async (item?: ReleaseReadinessTreeItem) => {
       try {
         if (await handleDeleteBranch(tokenManager, releaseProvider, item)) {
-          releaseTreeView.description = `${releaseProvider.getBranches().length} 个远程分支`;
+          releaseTreeView.description = releaseProvider.hasDisplayFilters ? releaseProvider.filterSummary : `${releaseProvider.getBranches().length} 个远程分支`;
         }
       } catch (error) {
         Logger.error('删除远程分支失败', error);
@@ -1129,7 +1167,7 @@ export async function handleCheckReleaseReadiness(
       }
     }
     if (!releaseBranch || !branches.includes(releaseBranch)) {
-      treeView.description = `${branches.length} 个远程分支`;
+      treeView.description = provider.hasDisplayFilters ? provider.filterSummary : `${branches.length} 个远程分支`;
       return;
     }
     if (!checkedBranch && !options.loadMoreRelease) {
@@ -1184,7 +1222,7 @@ export async function handleCheckReleaseReadiness(
     }
     const version = getReleaseVersion(releaseBranch);
     if (!version) {
-      treeView.description = releaseBranch;
+      treeView.description = provider.hasDisplayFilters ? provider.filterSummary : releaseBranch;
       await revealResults();
       return;
     }
@@ -1234,7 +1272,7 @@ export async function handleCheckReleaseReadiness(
     Logger.info(
       `上线检查${state.hasMore ? '分页结果（非完整结论）' : '完成'} ${releaseBranch}: 已加载 ${statuses.length}, 已合并 ${counts.merged}, 开放中 ${counts.open}, 已关闭 ${counts.closed}, 未创建 MR ${counts['not-created']}`
     );
-    treeView.description = state.hasMore ? `${version} · 已加载 ${statuses.length} 个 feature（结果未完整）`
+    treeView.description = provider.hasDisplayFilters ? provider.filterSummary : state.hasMore ? `${version} · 已加载 ${statuses.length} 个 feature（结果未完整）`
       : `${version} · ${counts.merged}/${statuses.length} 已合并`;
     await revealResults();
   } catch (error) {

@@ -1,5 +1,5 @@
 import { getReleaseFeatureStatuses, getReleaseVersion, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
-import { GitLabPage } from './types';
+import { GitLabBranchPage, GitLabPage } from './types';
 import type { MainMergeResult } from './gitService';
 
 export interface ReleaseOverviewEntry {
@@ -9,6 +9,7 @@ export interface ReleaseOverviewEntry {
   error?: string;
   mergedIntoMain?: boolean;
   mainError?: string;
+  committedDate?: string;
 }
 export interface ReleaseOverviewSnapshot {
   project: string;
@@ -16,7 +17,7 @@ export interface ReleaseOverviewSnapshot {
   entries: ReleaseOverviewEntry[];
 }
 export interface ReleaseOverviewSource {
-  branches(page: number): Promise<GitLabPage<string>>;
+  branches(page: number): Promise<GitLabBranchPage>;
   requests(branch: string, page: number): Promise<GitLabPage<ReleaseMergeRequest>>;
   mergedIntoMain(branches: string[]): Promise<MainMergeResult>;
 }
@@ -32,11 +33,16 @@ async function allPages<T>(fetch: (page: number) => Promise<GitLabPage<T>>): Pro
 
 export async function loadReleaseOverview(project: string, source: ReleaseOverviewSource): Promise<ReleaseOverviewSnapshot> {
   // Never derive absence of a branch/MR from an incomplete page.
-  const branches = [...new Set(await allPages(page => source.branches(page)))];
+  const dates = new Map<string, string>();
+  const branches = [...new Set(await allPages(async page => {
+    const result = await source.branches(page);
+    for (const commit of result.latestCommits ?? []) dates.set(commit.branch, commit.committedDate);
+    return result;
+  }))];
   const releases = branches.filter(branch => getReleaseVersion(branch)).sort();
   const entries: ReleaseOverviewEntry[] = [];
   for (const branch of releases) {
-    const entry: ReleaseOverviewEntry = { branch, version: getReleaseVersion(branch)!, features: [] };
+    const entry: ReleaseOverviewEntry = { branch, version: getReleaseVersion(branch)!, features: [], committedDate: dates.get(branch) };
     try {
       const requests = await allPages(page => source.requests(branch, page));
       entry.features = getReleaseFeatureStatuses(branch, branches, requests);

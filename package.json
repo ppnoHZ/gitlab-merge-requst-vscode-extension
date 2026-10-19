@@ -44,10 +44,19 @@
     "onView:gitlabMr.releaseOverview",
     "onCommand:gitlabMr.refreshReleaseOverview",
     "onCommand:gitlabMr.exportReleaseOverview",
+    "onCommand:gitlabMr.filterBranchStatus",
+    "onCommand:gitlabMr.clearBranchStatusFilters",
+    "onCommand:gitlabMr.filterReleaseOverview",
+    "onCommand:gitlabMr.clearReleaseOverviewFilters",
     "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
+      {"command": "gitlabMr.filterBranchStatus", "title": "筛选分支状态与更新时间", "category": "GitLab MR", "icon": "$(filter)"},
+      {"command": "gitlabMr.clearBranchStatusFilters", "title": "清除状态和时间筛选", "category": "GitLab MR", "icon": "$(clear-all)"},
+      {"command": "gitlabMr.filterReleaseOverview", "title": "筛选上线总览", "category": "GitLab MR", "icon": "$(filter)"},
+      {"command": "gitlabMr.clearReleaseOverviewFilters", "title": "清除上线总览筛选", "category": "GitLab MR", "icon": "$(clear-all)"},
+
       {"command": "gitlabMr.refreshReleaseOverview", "title": "刷新上线总览", "category": "GitLab MR", "icon": "$(refresh)"},
       {"command": "gitlabMr.exportReleaseOverview", "title": "导出上线变更清单（Markdown）", "category": "GitLab MR", "icon": "$(export)"},
       {
@@ -381,6 +390,11 @@
         }
       ],
       "view/title": [
+        {"command": "gitlabMr.filterBranchStatus", "when": "view == gitlabMr.releaseReadiness", "group": "navigation@3"},
+        {"command": "gitlabMr.clearBranchStatusFilters", "when": "view == gitlabMr.releaseReadiness", "group": "navigation@4"},
+        {"command": "gitlabMr.filterReleaseOverview", "when": "view == gitlabMr.releaseOverview", "group": "navigation@3"},
+        {"command": "gitlabMr.clearReleaseOverviewFilters", "when": "view == gitlabMr.releaseOverview", "group": "navigation@4"},
+
         {"command": "gitlabMr.refreshReleaseOverview", "when": "view == gitlabMr.releaseOverview", "group": "navigation@1"},
         {"command": "gitlabMr.exportReleaseOverview", "when": "view == gitlabMr.releaseOverview", "group": "navigation@2"},
         {
@@ -507,7 +521,8 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:release-overview && npm run test:audit",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && npm run test:filters && npm run test:release-overview && npm run test:audit",
+    "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js"
   },
