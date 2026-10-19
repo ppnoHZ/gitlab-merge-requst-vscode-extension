@@ -12,6 +12,13 @@ interface GitLabProject {
   path_with_namespace?: string;
 }
 
+interface GitLabBranch {
+  name: string;
+  protected: boolean;
+  default: boolean;
+  commit: { id: string };
+}
+
 export class GitLabService {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -27,7 +34,9 @@ export class GitLabService {
   /**
    * 通用 HTTP 请求方法，内置处理私有部署/证书容错
    */
-  private async request<T>(path: string, options: { method?: string; body?: any } = {}): Promise<T> {
+  private request(path: string, options: { method: 'DELETE' }): Promise<void>;
+  private request<T>(path: string, options?: { method?: string; body?: any }): Promise<T>;
+  private async request<T>(path: string, options: { method?: string; body?: any } = {}): Promise<T | void> {
     const fullUrl = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const urlObj = new URL(fullUrl);
     const isHttps = urlObj.protocol === 'https:';
@@ -71,6 +80,9 @@ export class GitLabService {
 
     if (status >= 200 && status < 300) {
       Logger.info(`[GitLab API 成功 ${status}] ${method} ${path}`);
+      if (method === 'DELETE' && status === 204) {
+        return;
+      }
       if (!responseBody.trim()) {
         throw new Error(`GitLab API 返回空响应 [${status}]: ${method} ${path}`);
       }
@@ -180,6 +192,35 @@ export class GitLabService {
       `/projects/${encodedId}/repository/branches?${query}`
     );
     return { items: branches.map(branch => branch.name), hasMore: branches.length === 100 };
+  }
+
+  async deleteBranch(
+    projectId: string | number,
+    branch: string,
+    expectedCommit: string,
+    expectedMainCommit: string
+  ): Promise<void> {
+    if (!branch || branch === 'main') {
+      throw new Error('禁止删除 main 或无效分支。');
+    }
+    const basePath = `/projects/${encodeURIComponent(String(projectId))}/repository/branches`;
+    const branchPath = `${basePath}/${encodeURIComponent(branch)}`;
+    const [current, main] = await Promise.all([
+      this.request<GitLabBranch>(branchPath),
+      this.request<GitLabBranch>(`${basePath}/main`)
+    ]);
+    if (current?.name !== branch || typeof current.protected !== 'boolean' ||
+      typeof current.default !== 'boolean' || main?.name !== 'main' ||
+      !expectedCommit || !expectedMainCommit) {
+      throw new Error('GitLab 分支信息无效，无法安全删除。');
+    }
+    if (current.protected || current.default) {
+      throw new Error('禁止删除默认分支或受保护分支。');
+    }
+    if (current.commit?.id !== expectedCommit || main.commit?.id !== expectedMainCommit) {
+      throw new Error('分支或 main 在检查期间已更新，已取消删除，请刷新后重试。');
+    }
+    await this.request(branchPath, { method: 'DELETE' });
   }
 
   async getMergeRequestsTargetingBranch(

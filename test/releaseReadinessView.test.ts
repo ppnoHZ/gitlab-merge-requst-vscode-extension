@@ -288,6 +288,24 @@ assert.equal(newSessionProvider.getBranchKeyword(), '');
 newSessionProvider.dispose();
 
 const manifest = JSON.parse(readFileSync(`${__dirname}/../package.json`, 'utf8'));
+assert.ok(manifest.activationEvents.includes('onCommand:gitlabMr.copyBranchName'));
+assert.ok(manifest.contributes.commands.some((command: { command: string; icon?: string }) =>
+  command.command === 'gitlabMr.copyBranchName' && command.icon === '$(copy)'
+));
+const copyMenus: Array<{ when: string; group: string }> =
+  manifest.contributes.menus['view/item/context'].filter((item: { command: string }) =>
+    item.command === 'gitlabMr.copyBranchName'
+  );
+assert.deepEqual(copyMenus.map(item => item.group), ['inline@2', 'copy']);
+for (const menu of copyMenus) {
+  assert.equal(menu.when, 'view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/');
+}
+for (const context of [
+  'remoteBranch', 'remoteBranch-canMergeToMain', 'remoteBranch-canDeleteBranch',
+  'releaseFeature-pending-canMergeToMain', 'releaseFeature-merged-canDeleteBranch'
+]) {
+  assert.match(context, /^(remoteBranch|releaseFeature-)/);
+}
 assert.equal(manifest.activationEvents.includes('onCommand:gitlabMr.loadMoreBranches'), false);
 assert.equal(manifest.contributes.commands.some((command: { command: string }) =>
   command.command === 'gitlabMr.loadMoreBranches'

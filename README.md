@@ -17,6 +17,8 @@
 5. **私有部署支持**：完美支持企业私有部署的 GitLab (Self-hosted) 与自签名证书内网环境。
 6. **安全存储 Token**：支持通过 VS Code 原生 `SecretStorage` 加密安全保存 GitLab Access Token。
 7. **上线版本检查**：加载 GitLab 上的全部远程分支，默认过滤显示常用分支，按 `/` 逐层展开；选择 `release/` 分支后，核对同版本 `feature/` 分支的 MR 状态，并可直接为待处理分支创建 MR。
+8. **手动清理已合入分支**：默认关闭；启用后可删除最新代码已全部合入远程 `main` 的分支，需二次确认和实时检查。禁止删除 main、默认分支和受保护分支，保留本地分支。
+9. **复制分支名称**：点击分支行内复制按钮或右键“复制分支名称”，将包含完整路径的分支名复制到剪贴板；支持远程分支和 release 下的 feature 结果。
 
 ---
 
@@ -31,6 +33,7 @@
 | `gitlabMr.titleTemplate` | `Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}` | 未命中内置规范时的兜底 Title 生成模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey} 等。 |
 | `gitlabMr.defaultReviewers` | `[]` | 默认 Reviewer 的 GitLab 用户名列表，例如 `["zhangsan", "lisi"]`。 |
 | `gitlabMr.removeSourceBranch`| `true` | 合并后是否勾选自动删除源分支。 |
+| `gitlabMr.allowBranchDeletion` | `false` | 是否允许手动删除已全部合入远程 main 的分支；不影响 MR 自动删除配置。 |
 | `gitlabMr.squash` | `false` | 是否开启 Squash commits。 |
 | `gitlabMr.autoOpenInBrowser` | `true` | MR 创建成功后是否自动在浏览器中打开对应页面。 |
 

@@ -1,14 +1,45 @@
 import assert from 'assert';
 import * as vscode from 'vscode';
-import { handleCheckReleaseReadiness, handleCreateMainMergeRequest, handleFilterBranchesByKeyword } from '../src/extension';
+import { handleCheckReleaseReadiness, handleCopyBranchName, handleCreateMainMergeRequest, handleFilterBranchesByKeyword } from '../src/extension';
 import { GitService } from '../src/gitService';
 import { GitLabService } from '../src/gitlabService';
 import { ReleaseReadinessProvider, ReleaseReadinessTreeItem } from '../src/releaseReadinessView';
 import { ReleaseMergeRequest } from '../src/releaseReadiness';
-import { configuration, informationMessages, warnings, titleInput, openedUrls, targetPick } from './vscodeMock';
+import { clipboard, configuration, informationMessages, warnings, titleInput, openedUrls, targetPick } from './vscodeMock';
 import { MergeRequestPayload } from '../src/types';
 
 async function runTests(): Promise<void> {
+  for (const branch of ['main', 'release/v1/hotfix', 'feature/v1/PROJ-1/deep/path']) {
+    const branchItem = new ReleaseReadinessTreeItem(
+      'branch', branch.split('/').at(-1)!, vscode.TreeItemCollapsibleState.None,
+      undefined, undefined, undefined, branch
+    );
+    await handleCopyBranchName(branchItem);
+    assert.equal(clipboard.text, branch);
+    assert.equal(informationMessages.at(-1), `已复制分支名称: ${branch}`);
+  }
+  const copyFeatureItem = new ReleaseReadinessTreeItem(
+    'feature', 'feature/v1/PROJ-2', vscode.TreeItemCollapsibleState.None,
+    { branch: 'feature/v1/PROJ-2', state: 'merged' }, undefined, undefined, 'release/v1'
+  );
+  await handleCopyBranchName(copyFeatureItem);
+  assert.equal(clipboard.text, 'feature/v1/PROJ-2');
+  const clipboardBefore = clipboard.text;
+  await assert.rejects(handleCopyBranchName(), /请选择/);
+  for (const kind of ['directory', 'message', 'search', 'loadMore', 'issueLink'] as const) {
+    await assert.rejects(handleCopyBranchName(new ReleaseReadinessTreeItem(
+      kind, 'feature', vscode.TreeItemCollapsibleState.None,
+      undefined, undefined, undefined, 'feature'
+    )), /不能复制目录/);
+  }
+  assert.equal(clipboard.text, clipboardBefore);
+  const messagesBefore = informationMessages.length;
+  clipboard.error = new Error('Clipboard unavailable');
+  await assert.rejects(handleCopyBranchName(copyFeatureItem), /Clipboard unavailable/);
+  assert.equal(informationMessages.length, messagesBefore);
+  clipboard.error = undefined;
+  console.log('[PASS] copy branch name: full paths, main, feature source, invalid nodes, clipboard errors');
+
   const calls = { list: 0, all: 0, version: 0, project: 0, selected: [] as string[], mr: [] as string[] };
   const branches = ['main', 'feature/v1/PROJ-1', 'release/v1', 'dev'];
   let failSelected = false;

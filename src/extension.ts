@@ -214,6 +214,41 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const copyBranchNameCmd = vscode.commands.registerCommand(
+    'gitlabMr.copyBranchName',
+    async (item?: ReleaseReadinessTreeItem) => {
+      try {
+        await handleCopyBranchName(item);
+      } catch (error) {
+        Logger.error('复制分支名称失败', error);
+        vscode.window.showErrorMessage(
+          `复制分支名称失败: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
+
+  const deleteBranchCmd = vscode.commands.registerCommand(
+    'gitlabMr.deleteBranch',
+    async (item?: ReleaseReadinessTreeItem) => {
+      try {
+        if (await handleDeleteBranch(tokenManager, releaseProvider, item)) {
+          releaseTreeView.description = `${releaseProvider.getBranches().length} 个远程分支`;
+        }
+      } catch (error) {
+        Logger.error('删除远程分支失败', error);
+        vscode.window.showErrorMessage(
+          `删除远程分支失败: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+  );
+  const deletionConfigChanged = vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('gitlabMr.allowBranchDeletion')) {
+      releaseProvider.refresh();
+    }
+  });
+
   // 5. 注册状态栏按钮
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.command = 'gitlabMr.createMergeRequest';
@@ -237,6 +272,9 @@ export function activate(context: vscode.ExtensionContext) {
     createMainMrCmd,
     openReleaseMrCmd,
     openConfiguredIssueLinkCmd,
+    copyBranchNameCmd,
+    deleteBranchCmd,
+    deletionConfigChanged,
     releaseProvider,
     releaseTreeView,
     statusBarItem
@@ -318,6 +356,82 @@ export async function handleCreateMainMergeRequest(
     return;
   }
   await handleCreateMergeRequest(tokenManager, { sourceBranch: branch });
+}
+
+export async function handleCopyBranchName(item?: ReleaseReadinessTreeItem): Promise<void> {
+  const branch = item?.kind === 'branch' ? item.branchPath
+    : item?.kind === 'feature' ? item.status?.branch : undefined;
+  if (!branch) {
+    throw new Error('请选择远程分支或 feature 分支结果，不能复制目录。');
+  }
+  await vscode.env.clipboard.writeText(branch);
+  vscode.window.showInformationMessage(`已复制分支名称: ${branch}`);
+}
+
+export async function handleDeleteBranch(
+  tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
+  provider: ReleaseReadinessProvider,
+  item?: ReleaseReadinessTreeItem
+): Promise<boolean> {
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  const deletionAllowed = () => vscode.workspace.getConfiguration('gitlabMr', workspace?.uri)
+    .get<boolean>('allowBranchDeletion', false) === true;
+  if (!deletionAllowed()) {
+    throw new Error('分支删除功能默认关闭，请先启用 gitlabMr.allowBranchDeletion。');
+  }
+  const branch = item?.kind === 'branch' ? item.branchPath
+    : item?.kind === 'feature' ? item.status?.branch : undefined;
+  if (!branch || branch === 'main') {
+    throw new Error('请选择 main 以外的远程分支，不能删除目录或 main。');
+  }
+  if (!workspace) {
+    throw new Error('请先打开 GitLab 项目的工作区。');
+  }
+  const confirmation = await vscode.window.showWarningMessage(
+    `确定删除 GitLab 远程分支 ${branch}？仅在最新代码已全部合入 main 时执行；本地分支不会删除。`,
+    { modal: true },
+    '删除远程分支'
+  );
+  if (confirmation !== '删除远程分支') {
+    return false;
+  }
+  const token = await tokenManager.getToken() || await tokenManager.promptForToken();
+  if (!token) {
+    return false;
+  }
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `正在检查并删除远程分支 ${branch}...`,
+      cancellable: false
+    },
+    async () => {
+      const gitService = new GitService(workspace.uri.fsPath);
+      const repoInfo = await gitService.getRepoInfo();
+      let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace.uri)
+        .get<string>('instanceUrl', 'https://gitlab.com').trim();
+      if (instanceUrl === 'https://gitlab.com' && repoInfo.gitlabHost !== 'gitlab.com') {
+        instanceUrl = `https://${repoInfo.gitlabHost}`;
+      }
+      const service = new GitLabService(instanceUrl, token);
+      const project = await service.getProject(repoInfo.projectPath);
+      // Never authorize deletion from the cached tree marker.
+      provider.setBranchMergedIntoMain(branch, false);
+      const { merged, commit, mainCommit } = await gitService.checkBranchForDeletion(branch);
+      provider.setBranchMergedIntoMain(branch, merged);
+      if (!merged) {
+        throw new Error(`${branch} 尚有代码未合入 main（或存在合并冲突），禁止删除。`);
+      }
+      if (!deletionAllowed()) {
+        throw new Error('分支删除功能已关闭，已取消删除。');
+      }
+      await service.deleteBranch(project.id, branch, commit, mainCommit);
+    }
+  );
+  provider.removeBranch(branch);
+  Logger.info(`已删除 GitLab 远程分支: ${branch}`);
+  vscode.window.showInformationMessage(`已删除远程分支 ${branch}，本地分支保持不变。`);
+  return true;
 }
 
 async function handleCreateMergeRequest(

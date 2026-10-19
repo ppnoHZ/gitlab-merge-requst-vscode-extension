@@ -372,6 +372,10 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     item.iconPath = new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
     item.description = [item.description, '代码已合入 main'].filter(Boolean).join(' · ');
     item.tooltip = `${item.tooltip}\n该分支最新内容已全部合入远程 main`;
+    if (vscode.workspace.getConfiguration('gitlabMr', vscode.workspace.workspaceFolders?.[0]?.uri)
+      .get<boolean>('allowBranchDeletion', false) === true) {
+      item.contextValue = `${item.contextValue}-canDeleteBranch`;
+    }
   }
 
   setMergedIntoMain(branches: Iterable<string>): void {
@@ -409,6 +413,24 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
       }
     }
     this.changeEmitter.fire(undefined);
+  }
+
+  removeBranch(branch: string): void {
+    // Invalidate in-flight reads so they cannot restore deleted branches.
+    this.branchPage = { ...this.branchPage, loading: false };
+    this.mergedIntoMain.delete(branch);
+    this.releasePages.delete(branch);
+    this.checkingBranches.delete(branch);
+    for (const [target, statuses] of this.statuses) {
+      if (Array.isArray(statuses)) {
+        this.statuses.set(target, statuses.filter(status => status.branch !== branch));
+      }
+    }
+    for (const page of this.releasePages.values()) {
+      page.branches = page.branches.filter(name => name !== branch);
+      page.requests = page.requests.filter(request => request.source_branch !== branch);
+    }
+    this.setBranches(this.branches.filter(name => name !== branch));
   }
 
   setReadiness(releaseBranch: string, statuses: ReleaseFeatureStatus[], selectBranch = true): void {

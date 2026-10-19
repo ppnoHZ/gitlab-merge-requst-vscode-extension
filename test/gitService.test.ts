@@ -85,6 +85,13 @@ async function runTests(): Promise<void> {
     assert.equal(await service.isBranchMergedIntoMain('feature/squash'), false);
     assert.equal(git(checkout, 'rev-parse', 'refs/remotes/origin/feature/normal'), unrelatedBefore);
     assert.equal(await service.isBranchMergedIntoMain('feature/rebase'), true);
+    assert.deepEqual(await service.checkBranchForDeletion('feature/rebase'), {
+      merged: true,
+      commit: originalRebaseCommit,
+      mainCommit: git(seed, 'rev-parse', 'main')
+    });
+    assert.equal((await service.checkBranchForDeletion('feature/squash')).merged, false);
+    assert.equal((await service.checkBranchForDeletion('release/conflict')).merged, false);
     assert.equal(await service.isBranchMergedIntoMain('main'), false);
     assert.equal(git(checkout, 'status', '--porcelain'), statusBefore);
     assert.equal(git(checkout, 'rev-parse', 'HEAD'), headBefore);

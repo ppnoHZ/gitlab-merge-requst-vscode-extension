@@ -81,7 +81,24 @@ export class GitService {
     return merged.has(branch);
   }
 
+  async checkBranchForDeletion(branch: string): Promise<{ merged: boolean; commit: string; mainCommit: string }> {
+    const result = await this.checkBranchesMergedIntoMain(['main', branch], false);
+    const commit = result.commits.get(branch);
+    const mainCommit = result.commits.get('main');
+    if (!commit || !mainCommit) {
+      throw new Error('无法获取用于删除检查的分支提交。');
+    }
+    return { merged: result.merged.has(branch), commit, mainCommit };
+  }
+
   async getBranchesMergedIntoMain(branchNames: string[], fetchAll = true): Promise<Set<string>> {
+    return (await this.checkBranchesMergedIntoMain(branchNames, fetchAll)).merged;
+  }
+
+  private async checkBranchesMergedIntoMain(
+    branchNames: string[],
+    fetchAll: boolean
+  ): Promise<{ merged: Set<string>; commits: Map<string, string> }> {
     if (!branchNames.includes('main')) {
       throw new Error('远程仓库没有 main 分支，无法检查代码是否已合入 main。');
     }
@@ -119,7 +136,7 @@ export class GitService {
         mergedBranches.add(branch);
       }
     }
-    return mergedBranches;
+    return { merged: mergedBranches, commits };
   }
 
   /**

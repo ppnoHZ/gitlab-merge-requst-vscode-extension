@@ -44,6 +44,11 @@ export const workspace = {
 
 export const ProgressLocation = { Notification: 15 };
 export const warnings: string[] = [];
+export const warningDialog = {
+  value: undefined as string | undefined,
+  modal: false,
+  onShow: undefined as (() => void) | undefined
+};
 export const informationMessages: string[] = [];
 export const titleInput = { value: undefined as string | undefined, titles: [] as string[] };
 export const targetPick = {
@@ -51,8 +56,20 @@ export const targetPick = {
   items: [] as Array<{ label: string; description?: string }>
 };
 export const openedUrls: string[] = [];
+export const clipboard = {
+  text: '',
+  error: undefined as Error | undefined
+};
 export const Uri = { parse: (value: string) => value };
 export const env = {
+  clipboard: {
+    writeText: async (text: string) => {
+      if (clipboard.error) {
+        throw clipboard.error;
+      }
+      clipboard.text = text;
+    }
+  },
   openExternal: async (uri: string) => { openedUrls.push(uri); }
 };
 
@@ -69,7 +86,12 @@ export const window = {
     titleInput.titles.push(options.value ?? '');
     return titleInput.value;
   },
-  showWarningMessage: (message: string) => { warnings.push(message); },
+  showWarningMessage: async (message: string, options?: { modal?: boolean }, ..._items: string[]) => {
+    warnings.push(message);
+    warningDialog.modal = options?.modal === true;
+    warningDialog.onShow?.();
+    return warningDialog.value;
+  },
   showInformationMessage: async (message: string) => {
     informationMessages.push(message);
     return undefined;

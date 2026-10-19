@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -31,11 +31,25 @@
     "onCommand:gitlabMr.createReleaseFeatureMergeRequest",
     "onCommand:gitlabMr.createMainMergeRequest",
     "onCommand:gitlabMr.openReleaseMergeRequest",
+    "onCommand:gitlabMr.deleteBranch",
+    "onCommand:gitlabMr.copyBranchName",
     "onView:gitlabMr.releaseReadiness",
     "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "gitlabMr.copyBranchName",
+        "title": "Copy Branch Name (复制分支名称)",
+        "category": "GitLab MR",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "gitlabMr.deleteBranch",
+        "title": "Delete Merged Branch (删除已合入 main 的远程分支)",
+        "category": "GitLab MR",
+        "icon": "$(trash)"
+      },
       {
         "command": "gitlabMr.createMergeRequest",
         "title": "Create Merge Request (一键创建 MR)",
@@ -181,6 +195,12 @@
           "description": "创建 MR 时是否默认勾选【合并后删除源分支】",
           "order": 7
         },
+        "gitlabMr.allowBranchDeletion": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "允许手动删除已全部合入远程 `main` 的分支。默认关闭；删除前必须确认并重新检查最新代码。禁止删除 `main`、默认分支和受保护分支；仅删除远程分支，不影响本地分支及 `gitlabMr.removeSourceBranch` 配置。",
+          "order": 10
+        },
         "gitlabMr.squash": {
           "type": "boolean",
           "default": false,
@@ -222,6 +242,14 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "gitlabMr.copyBranchName",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "false"
+        },
+        {
           "command": "gitlabMr.retryBranches",
           "when": "false"
         },
@@ -254,6 +282,26 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gitlabMr.copyBranchName",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
+          "group": "inline@2"
+        },
+        {
+          "command": "gitlabMr.copyBranchName",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
+          "group": "copy"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "gitlabMr.deleteBranch",
+          "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
+          "group": "delete"
+        },
         {
           "command": "gitlabMr.checkReleaseReadiness",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
@@ -294,7 +342,7 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js"
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
