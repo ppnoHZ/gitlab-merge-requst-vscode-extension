@@ -111,5 +111,3 @@ main 标记需要 Git 2.38+ 和可用的 origin 拉取权限。首次加载、�
    npx @vscode/vsce package
    ```
    生成 `.vsix` 文件后，在 VS Code 扩展面板中点击右上角 `...` -> `从 VSIX 安装...` 即可完成本地安装。
-#   g i t l a b - m e r g e - r e q u s t - v s c o d e - e x t e n s i o n  
- 
