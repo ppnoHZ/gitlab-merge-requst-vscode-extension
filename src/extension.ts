@@ -467,6 +467,7 @@ async function handleCreateMergeRequest(
   const config = vscode.workspace.getConfiguration('gitlabMr', workspaceFolders[0].uri);
   let instanceUrl = config.get<string>('instanceUrl', 'https://gitlab.com').trim();
   const defaultTarget = config.get<string>('defaultTargetBranch', 'master');
+  const hideNonConformingTargets = config.get<boolean>('hideNonConformingTargetBranches', true);
   const titleTemplate = config.get<string>(
     'titleTemplate',
     'Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}'
@@ -547,13 +548,25 @@ async function handleCreateMergeRequest(
 
   // 6. 选择目标分支 (Target Branch)
 
-  const branchPicks = TemplateEngine.recommendTargetBranches(sourceBranch, branches, defaultTarget)
+  const branchPicks = TemplateEngine.recommendTargetBranches(
+    sourceBranch, branches, defaultTarget, hideNonConformingTargets
+  )
     .map(({ branch, reason }) => ({
       label: branch,
       description: [reason, branch === defaultTarget ? '配置的默认目标' : undefined].filter(Boolean).join(' · ')
     }));
+  if (!presetBranches?.targetBranch && branchPicks.length === 0) {
+    const message = hideNonConformingTargets
+      ? `源分支 ${sourceBranch} 没有符合内置合并规则的目标分支。请检查分支列表，或关闭 gitlabMr.hideNonConformingTargetBranches 后重试。`
+      : `源分支 ${sourceBranch} 没有可选的目标分支，请检查分支列表和默认目标配置。`;
+    Logger.warn(message);
+    vscode.window.showWarningMessage(message);
+    return;
+  }
   const selectedTarget = presetBranches?.targetBranch ?? (await vscode.window.showQuickPick(branchPicks, {
-    placeHolder: '选择合并目标分支（推荐分支优先，其余分支仍可选择）',
+    placeHolder: hideNonConformingTargets
+      ? '选择合并目标分支（仅展示符合内置合并规则的分支）'
+      : '选择合并目标分支（推荐分支优先，其余分支仍可选择）',
     title: `当前源分支: ${sourceBranch}`
   }))?.label;
 

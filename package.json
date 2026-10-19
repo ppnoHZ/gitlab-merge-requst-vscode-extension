@@ -183,6 +183,12 @@
           "description": "默认目标合并分支（如 master, main, dev 或 release）",
           "order": 5
         },
+        "gitlabMr.hideNonConformingTargetBranches": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "选择 MR 目标分支时，仅展示符合内置源分支 → 目标分支合并规则的候选。默认开启；不符合规则的默认目标也会隐藏。无匹配规则或候选时提示并停止，可关闭此配置恢复显示全部候选。不会影响源分支选择、远程分支浏览或 release 检查中固定目标的补建 MR。",
+          "order": 11
+        },
         "gitlabMr.titleTemplate": {
           "type": "string",
           "default": "Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}",

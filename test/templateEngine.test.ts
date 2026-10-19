@@ -278,7 +278,7 @@ function runTargetRecommendationTests() {
     'main', 'master', 'dev', 'uat', 'pre', 'tst', 'release/2.8.01',
     'release/2.8.0', 'release/2.8.0/hotfix', 'feature/2.8.0/PROJ-1', 'other'
   ];
-  const feature = TemplateEngine.recommendTargetBranches('feature/2.8.0/PROJ-1', branches, 'main');
+  const feature = TemplateEngine.recommendTargetBranches('feature/2.8.0/PROJ-1', branches, 'main', false);
   assert.deepEqual(feature.slice(0, 3).map(item => item.branch), [
     'release/2.8.0', 'release/2.8.0/hotfix', 'release/2.8.01'
   ]);
@@ -300,7 +300,7 @@ function runTargetRecommendationTests() {
     ['master', ['dev', 'uat', 'pre', 'tst', 'release/2.8.01', 'release/2.8.0', 'release/2.8.0/hotfix']]
   ] as const;
   for (const [source, expected] of rules) {
-    const result = TemplateEngine.recommendTargetBranches(source, branches, 'main');
+    const result = TemplateEngine.recommendTargetBranches(source, branches, 'main', false);
     assert.deepEqual(
       result.filter(item => item.reason).map(item => item.branch).sort(),
       [...expected].sort(),
@@ -309,14 +309,25 @@ function runTargetRecommendationTests() {
     const firstOther = result.findIndex(item => !item.reason);
     assert.equal(result.slice(firstOther).some(item => item.reason), false);
     assert.equal(result.some(item => item.branch === source), false);
+    assert.deepEqual(
+      TemplateEngine.recommendTargetBranches(source, branches, 'main'),
+      result.filter(item => item.reason),
+      `${source}: default filtering preserves compliant candidates and ordering`
+    );
   }
   assert.deepEqual(
-    TemplateEngine.recommendTargetBranches('custom/work', ['dev', 'main', 'other'], 'main'),
+    TemplateEngine.recommendTargetBranches('custom/work', ['dev', 'main', 'other'], 'main', false),
     [
       { branch: 'main', reason: undefined },
       { branch: 'dev', reason: undefined },
       { branch: 'other', reason: undefined }
     ]
+  );
+  assert.deepEqual(TemplateEngine.recommendTargetBranches('custom/work', branches, 'main'), []);
+  assert.deepEqual(TemplateEngine.recommendTargetBranches('feature/task', ['main', 'dev'], 'main'), []);
+  assert.deepEqual(
+    TemplateEngine.recommendTargetBranches('feature/2.8.0/PROJ-1', branches, 'main'),
+    feature.filter(item => item.reason)
   );
   assert.deepEqual(TemplateEngine.recommendTargetBranches('main', ['main', 'origin/main'], 'main'), []);
   assert.deepEqual(

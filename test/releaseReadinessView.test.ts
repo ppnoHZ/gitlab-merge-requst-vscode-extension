@@ -288,6 +288,10 @@ assert.equal(newSessionProvider.getBranchKeyword(), '');
 newSessionProvider.dispose();
 
 const manifest = JSON.parse(readFileSync(`${__dirname}/../package.json`, 'utf8'));
+assert.equal(
+  manifest.contributes.configuration.properties['gitlabMr.hideNonConformingTargetBranches'].default,
+  true
+);
 assert.ok(manifest.activationEvents.includes('onCommand:gitlabMr.copyBranchName'));
 assert.ok(manifest.contributes.commands.some((command: { command: string; icon?: string }) =>
   command.command === 'gitlabMr.copyBranchName' && command.icon === '$(copy)'

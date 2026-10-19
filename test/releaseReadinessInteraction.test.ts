@@ -274,6 +274,7 @@ async function runTests(): Promise<void> {
   assert.ok(targetPick.items.find(item => item.label === 'dev')?.description?.includes('推荐'));
   assert.ok(targetPick.items.find(item => item.label === 'main')?.description?.includes('推荐'));
   assert.equal(targetPick.items.some(item => item.label === 'release/v1'), false);
+  assert.deepEqual(targetPick.items.map(item => item.label), ['master', 'main', 'dev', 'uat']);
 
   titleInput.value = 'Merge feature to release';
   configuration.set('defaultReviewers', [' alice ', ' @bob ', 'alice']);
@@ -287,6 +288,7 @@ async function runTests(): Promise<void> {
   assert.equal(targetPick.items[0].label, 'release/v1');
   assert.match(targetPick.items[0].description ?? '', /同版本 release/);
   assert.equal(targetPick.items.some(item => item.label === 'feature/v1/PROJ-1'), false);
+  assert.deepEqual(targetPick.items.map(item => item.label), ['release/v1', 'release/v2']);
   assert.match(titleInput.titles.at(-1) ?? '', /feature-release/);
 
   targetPick.value = undefined;
@@ -294,6 +296,23 @@ async function runTests(): Promise<void> {
   await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
   assert.equal(created.length, 2);
   assert.equal(titleInput.titles.length, titleCount);
+
+  configuration.set('hideNonConformingTargetBranches', false);
+  await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
+  assert.deepEqual(targetPick.items.map(item => item.label), [
+    'release/v1', 'release/v2', 'master', 'main', 'dev', 'uat'
+  ]);
+  assert.equal(created.length, 2);
+  configuration.delete('hideNonConformingTargetBranches');
+  const getBranches = GitService.prototype.getBranches;
+  GitService.prototype.getBranches = async () => ['main', 'dev'];
+  const picksBeforeEmpty = targetPick.items;
+  await handleCreateMainMergeRequest(tokenManager, provider, featureItem);
+  assert.match(warnings.at(-1) ?? '', /没有符合内置合并规则.*hideNonConformingTargetBranches/);
+  assert.equal(targetPick.items, picksBeforeEmpty);
+  assert.equal(created.length, 2);
+  assert.equal(titleInput.titles.length, titleCount);
+  GitService.prototype.getBranches = getBranches;
 
   targetPick.value = 'uat';
   titleInput.value = 'Merge release to uat';

@@ -30,6 +30,7 @@
 | :--- | :--- | :--- |
 | `gitlabMr.instanceUrl` | `https://gitlab.com` | 私有 GitLab 实例地址（如 `https://gitlab.mycompany.com`）。若不填，会自动根据 git remote 解析。 |
 | `gitlabMr.defaultTargetBranch` | `master` | 默认合并目标分支（如 `master`, `main` 或 `dev`）。 |
+| `gitlabMr.hideNonConformingTargetBranches` | `true` | 选择目标时只展示符合内置合并规则的分支；关闭后恢复展示全部候选。 |
 | `gitlabMr.titleTemplate` | `Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}` | 未命中内置规范时的兜底 Title 生成模板。支持变量：${sourceBranch}, ${targetBranch}, ${latestCommitTitle}, ${branchType}, ${issueKey} 等。 |
 | `gitlabMr.defaultReviewers` | `[]` | 默认 Reviewer 的 GitLab 用户名列表，例如 `["zhangsan", "lisi"]`。 |
 | `gitlabMr.removeSourceBranch`| `true` | 合并后是否勾选自动删除源分支。 |
@@ -69,9 +70,9 @@
 ### 2. 一键创建 Merge Request
 1. 在 VS Code 左下角状态栏点击 **`$(git-pull-request) GitLab MR`** 按钮，或者按 `Ctrl + Shift + P` 运行 **`GitLab: Create Merge Request`**；
 2. 插件会列出本地及已获取的远程分支，先选择 **源分支**（默认聚焦当前分支），再选择 **目标分支**；
-   - 目标列表按内置合并规则将推荐分支置顶，并显示推荐原因；其他分支仍在后面，可自由选择。
+   - 目标列表默认只展示符合内置合并规则的分支，并显示推荐原因；设置 `gitlabMr.hideNonConformingTargetBranches` 为 `false` 后，其他分支也在后面展示，可自由选择。
    - `feature` / `bugfix` 优先推荐 release，其中路径第二段相同的 release 排在最前；`release` / `hotfix` 推荐测试环境和 main/master；`conflict` 推荐测试环境和 release；`revert` 推荐测试环境、release 和 main/master；main/master 基线回流推荐测试环境和 release。
-   - 同等推荐级别内，配置的默认目标优先，其余保持原有顺序；未知源分支类型保持默认目标在前。不自动创建或合并 MR，仍需手动确认目标。
+   - 同等推荐级别内，配置的默认目标优先，其余保持原有顺序；默认目标不符合规则时也会隐藏。未知源分支类型或没有合规候选时提示并停止，可关闭过滤后重试。不自动创建或合并 MR，仍需手动确认目标。
 3. 插件根据配置规则生成 Title，并在输入框中展示供预览（直接回车即可使用自动生成的标题，亦可临时微调）；
 4. 插件在后台自动聚合提交日志、变动文件生成 Description，并指派 Reviewer，调用 GitLab API 创建 MR；
 5. 创建完成后右下角弹窗通知，并可直接一键打开或复制链接。
@@ -83,7 +84,7 @@
 4. 只有分支下的第二层检查结果按需分页。分页未完成时显示 **结果尚未完整**；MR 尚未加载完时，feature 显示 **MR 状态待确认**，不提供补建 release MR 操作，防止把后续页面上的 MR 误判为未创建。所有相关 MR 加载完成后才确认已加载 feature 的最终状态；同版本 feature 分页也完成后，才可视为完整版本结果。失败时显示重试入口、保留已加载页面，点击后重试失败页。刷新和更换搜索词会清空旧数据与检查结果，重新加载完整第一层列表。
 5. 除 `main` 自身外，分支最新代码已全部进入远程 `main` 时显示绿色通过图标及 **代码已合入 main** 标记。判断基于模拟合并后的代码树，而不是历史 MR 状态或提交 SHA，因此支持 squash/rebase，也允许 main 包含其他分支的改动。存在待合入改动或合并冲突时不标绿；目录不标记，release 的 MR 状态仍独立保留。
 6. 点击标题栏的 **漏斗图标**，或运行 **GitLab MR: Filter Branches (过滤常用分支)**，可多选分支过滤条件。默认勾选 `feature/`、`release/`、`dev`、`uat`、`main`、`bugfix/`、`hotfix/`、`tst`、`pre`；以 `/` 结尾的条件匹配该目录下所有层级，其他条件精确匹配分支名（例如 `dev` 不匹配 `develop` 或 `dev/test`）。取消全部勾选并确认即可显示全部，按 Esc 取消则保持原条件。选择会保存在当前工作区，刷新和重启后保留；无匹配时可点击提示重新调整。
-7. 未标记为已合入 main 的远程分支及上线检查中的功能分支，行内和右键菜单提供 **创建 MR（按合并规则推荐目标分支）**。点击后重新同步检查该分支，仍有待合入代码时，以所点分支为源分支，展示按现有合并规则排序的目标分支列表：feature/bugfix 优先推荐同版本 release，release/hotfix 推荐测试环境和 main/master，其余规则与一键创建 MR 相同，也可选择非推荐目标。选择目标后确认标题，沿用现有标题、描述、Reviewer 及 MR 选项配置。main 无须出现在当前分页中；若远程实际不存在 main，检查会报错并阻止此入口继续，通用创建入口仍可使用。
+7. 未标记为已合入 main 的远程分支及上线检查中的功能分支，行内和右键菜单提供 **创建 MR（按合并规则推荐目标分支）**。点击后重新同步检查该分支，仍有待合入代码时，以所点分支为源分支，展示按现有合并规则排序的目标分支列表：feature/bugfix 优先推荐同版本 release，release/hotfix 推荐测试环境和 main/master，其余规则与一键创建 MR 相同。默认隐藏非推荐目标，关闭 `gitlabMr.hideNonConformingTargetBranches` 后才可选择其他目标。选择目标后确认标题，沿用现有标题、描述、Reviewer 及 MR 选项配置。main 无须出现在当前分页中；若远程实际不存在 main，检查会报错并阻止此入口继续，通用创建入口仍可使用。
 
 8. 点击内容区域第一行的 **搜索分支**，输入关键词，使用 GitLab 远程分支搜索并自动加载全部匹配结果，匹配语义以 GitLab 的 `search` 参数为准（可使用 `^`、`$` 约束开头、结尾）。返回结果继续应用常用分支过滤并保留目录层级。清空并确认重新加载完整远程列表，按 Esc 保持原搜索。空结果仍保留搜索入口。关键词仅保存在本次会话，刷新及调整常用分支过滤时保留，重启清空。
 

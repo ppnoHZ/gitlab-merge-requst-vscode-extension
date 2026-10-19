@@ -16,7 +16,8 @@ export class TemplateEngine {
   static recommendTargetBranches(
     sourceBranch: string,
     branches: string[],
-    defaultTarget: string
+    defaultTarget: string,
+    hideNonConformingTargetBranches = true
   ): TargetBranchRecommendation[] {
     const { branchType } = this.parseBranch(sourceBranch);
     const targetCategories: Record<string, string[]> = {
@@ -46,7 +47,10 @@ export class TemplateEngine {
           rank: matchingVersion ? 2 : recommended ? 1 : 0
         };
       });
-    return ranked.sort((a, b) => b.rank - a.rank).map(({ branch, reason }) => ({ branch, reason }));
+    return ranked
+      .filter(item => !hideNonConformingTargetBranches || item.rank > 0)
+      .sort((a, b) => b.rank - a.rank)
+      .map(({ branch, reason }) => ({ branch, reason }));
   }
 
   /**

@@ -275,7 +275,11 @@ release
 | main / master | 测试环境分支和 release，用于基线回流 |
 | 其他 | 默认目标优先，其余可选 |
 
-常见测试环境包括 dev、tst、uat、pre 等。推荐不限制选择范围，也不会自动创建或合并 MR。同一推荐级别下，配置的默认目标优先。
+常见测试环境包括 dev、tst、uat、pre 等。同一推荐级别下，配置的默认目标优先。不会自动创建或合并 MR。
+
+`gitlabMr.hideNonConformingTargetBranches` 默认 `true`：目标选择列表仅显示符合上表合并方向的分支，不合规的默认目标也会隐藏。feature/bugfix 仍可选择其他版本的 release，同版本仅优先排序，并非唯一允许的版本。此配置沿用现有分支类型识别规则，不增加新的分支命名校验。
+
+未知源分支类型或没有符合规则的候选时，会提示并停止，不会自动退回全部候选。可将此配置设为 `false`，恢复“推荐优先、其余分支仍可选择”的行为，未知类型则默认目标优先。此过滤对通用创建及从分支推荐创建的目标选择均生效，不影响源分支选择、远程分支浏览或 release 检查中固定目标的补建 MR。
 
 ### 标题、描述与创建结果
 
@@ -328,6 +332,7 @@ release 检查结果中的 feature 分支支持工单链接：
 | `gitlabMr.instanceUrl` | `https://gitlab.com` | GitLab 实例地址 |
 | `gitlabMr.accessToken` | 空 | API Token，勿提交到仓库 |
 | `gitlabMr.defaultTargetBranch` | `master` | 默认目标；参与推荐排序，不强制使用 |
+| `gitlabMr.hideNonConformingTargetBranches` | `true` | 目标选择时隐藏不符合内置合并规则的分支；关闭后恢复全部候选 |
 | `gitlabMr.defaultReviewers` | `[]` | Reviewer 用户名列表，不需要 `@` |
 | `gitlabMr.titleTemplate` | `Merge ${sourceBranch} into ${targetBranch}: ${latestCommitTitle}` | 未命中内置规则时使用 |
 | `gitlabMr.removeSourceBranch` | `true` | 创建 MR 时设置合并后删除源分支 |
