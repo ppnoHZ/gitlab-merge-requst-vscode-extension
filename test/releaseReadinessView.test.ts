@@ -1,6 +1,6 @@
 import assert from 'assert';
 import * as vscode from 'vscode';
-import { commonBranchFilters, ReleaseReadinessProvider } from '../src/releaseReadinessView';
+import { commonBranchFilters, formatUpdateDuration, ReleaseReadinessProvider } from '../src/releaseReadinessView';
 import { existsSync, readFileSync } from 'fs';
 
 function branchRoots(provider: ReleaseReadinessProvider) {
@@ -286,6 +286,89 @@ keywordFiltered.dispose();
 const newSessionProvider = new ReleaseReadinessProvider();
 assert.equal(newSessionProvider.getBranchKeyword(), '');
 newSessionProvider.dispose();
+
+const commitProvider = new ReleaseReadinessProvider();
+const commitDate = '2026-10-19T11:00:00+08:00';
+const originalNow = Date.now;
+const fixedNow = Date.parse(commitDate) + 5 * 60_000;
+Date.now = () => fixedNow;
+for (const [elapsed, expected] of [
+  [0, '刚刚更新'],
+  [59_999, '刚刚更新'],
+  [60_000, '1分钟前更新'],
+  [3_599_999, '59分钟前更新'],
+  [3_600_000, '1小时前更新'],
+  [86_399_999, '23小时前更新'],
+  [86_400_000, '1天前更新'],
+  [3 * 86_400_000 + 3_600_000, '3天前更新'],
+  [-1, '提交时间晚于当前时间']
+] as const) {
+  assert.equal(formatUpdateDuration(commitDate, Date.parse(commitDate) + elapsed), expected);
+}
+assert.equal(formatUpdateDuration('invalid', fixedNow), '更新时间未知');
+assert.equal(formatUpdateDuration('2026-10-19T03:00:00Z', fixedNow), '5分钟前更新');
+const localTime = new Date(commitDate).toLocaleString('zh-CN', { hour12: false });
+const commitBranch = 'feature/v1/PROJ-1/deep';
+commitProvider.appendBranchPage(commitProvider.branchPage, {
+  items: ['main', commitBranch, 'release/v1'],
+  hasMore: false,
+  latestCommits: [
+    { branch: 'main', authorName: 'Main Author', committedDate: commitDate },
+    { branch: commitBranch, authorName: 'Alice', committedDate: commitDate }
+  ]
+});
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Alice · ${localTime} · 5分钟前更新`);
+assert.equal(commitProvider.getBranchItem('main')?.description, `Main Author · ${localTime} · 5分钟前更新`);
+assert.equal(commitProvider.getChildren().find(item => item.kind === 'directory')?.description, undefined);
+commitProvider.setBranches(commitProvider.getBranches(), commitBranch);
+commitProvider.setBranchMergedIntoMain(commitBranch, true);
+assert.equal(
+  commitProvider.getBranchItem(commitBranch)?.description,
+  `Alice · ${localTime} · 5分钟前更新 · 当前选择 · 代码已合入 main`
+);
+assert.match(String(commitProvider.getBranchItem(commitBranch)?.tooltip), /最新提交作者: Alice/);
+assert.ok(String(commitProvider.getBranchItem(commitBranch)?.tooltip).includes(commitDate));
+commitProvider.setBranchMergedIntoMain(commitBranch, false);
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Alice · ${localTime} · 5分钟前更新 · 当前选择`);
+const commitRelease = commitProvider.getBranchItem('release/v1')!;
+const commitReleasePage = commitProvider.startReleasePages('release/v1');
+commitProvider.appendReleasePage('release/v1', commitReleasePage, {
+  items: [commitBranch, 'feature/v1/PROJ-2'],
+  hasMore: false,
+  latestCommits: [
+    { branch: commitBranch, authorName: 'Bob', committedDate: commitDate },
+    { branch: 'feature/v1/PROJ-2', authorName: '', committedDate: 'invalid' }
+  ]
+}, { items: [], hasMore: false });
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Bob · ${localTime} · 5分钟前更新 · 当前选择`);
+const commitFeatures = commitProvider.getChildren(commitRelease).filter(item => item.kind === 'feature');
+assert.equal(commitFeatures[0].description, `Bob · ${localTime} · 5分钟前更新 · 尚未创建 MR`);
+assert.equal(commitFeatures[1].description, '作者未知 · 时间未知 · 尚未创建 MR');
+assert.doesNotMatch(String(commitFeatures[0].tooltip), /创建者/);
+const staleReleasePage = commitProvider.startReleasePages('release/v1');
+commitProvider.startReleasePages('release/v1');
+commitProvider.appendReleasePage('release/v1', staleReleasePage, {
+  items: [commitBranch], hasMore: false,
+  latestCommits: [{ branch: commitBranch, authorName: 'Stale', committedDate: commitDate }]
+}, { items: [], hasMore: false });
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Bob · ${localTime} · 5分钟前更新 · 当前选择`);
+Date.now = () => fixedNow + 3_600_000;
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, `Bob · ${localTime} · 1小时前更新 · 当前选择`);
+assert.match(String(commitProvider.getBranchItem(commitBranch)?.tooltip), /1小时前更新/);
+commitProvider.removeBranch(commitBranch);
+commitProvider.setBranches([...commitProvider.getBranches(), commitBranch]);
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, undefined);
+const staleBranchPage = commitProvider.branchPage;
+commitProvider.resetBranchPages('new-search');
+commitProvider.appendBranchPage(staleBranchPage, {
+  items: [commitBranch], hasMore: false,
+  latestCommits: [{ branch: commitBranch, authorName: 'Stale', committedDate: commitDate }]
+});
+commitProvider.appendBranchPage(commitProvider.branchPage, { items: [commitBranch], hasMore: false });
+assert.equal(commitProvider.getBranchItem(commitBranch)?.description, undefined);
+commitProvider.dispose();
+Date.now = originalNow;
+console.log('[PASS] latest branch commit: authors, local times, tooltips, state markers, release pages, invalid data, stale responses and reset');
 
 const manifest = JSON.parse(readFileSync(`${__dirname}/../package.json`, 'utf8'));
 assert.equal(

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { getReleaseFeatureStatuses, ReleaseFeatureState, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
-import { GitLabPage } from './types';
+import { BranchLatestCommit, GitLabBranchPage, GitLabPage } from './types';
 import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
 import { Logger } from './logger';
 
@@ -45,12 +45,34 @@ export const commonBranchFilters = [
   'feature/', 'release/', 'dev', 'uat', 'main', 'bugfix/', 'hotfix/', 'tst', 'pre'
 ];
 
+export function formatUpdateDuration(committedDate: string, now = Date.now()): string {
+  const timestamp = Date.parse(committedDate);
+  if (!Number.isFinite(timestamp)) {
+    return '更新时间未知';
+  }
+  const elapsed = now - timestamp;
+  if (elapsed < 0) {
+    return '提交时间晚于当前时间';
+  }
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) {
+    return '刚刚更新';
+  }
+  if (minutes < 60) {
+    return `${minutes}分钟前更新`;
+  }
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}小时前更新` : `${Math.floor(hours / 24)}天前更新`;
+}
+
 export class ReleaseReadinessProvider implements vscode.TreeDataProvider<ReleaseReadinessTreeItem> {
   private readonly changeEmitter = new vscode.EventEmitter<ReleaseReadinessTreeItem | undefined>();
   readonly onDidChangeTreeData = this.changeEmitter.event;
   releaseBranch: string | undefined;
   selectedBranch: string | undefined;
   private branches: string[] = [];
+  private readonly latestCommits = new Map<string, BranchLatestCommit>();
+  private durationTimer: ReturnType<typeof setInterval> | undefined;
   private readonly statuses = new Map<string, ReleaseFeatureStatus[] | string>();
   private readonly mainChecks = new Map<string, string>();
   private mergedIntoMain = new Set<string>();
@@ -86,17 +108,20 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     this.branchKeyword = keyword.trim();
     this.branchPage = { page: 0, hasMore: true, loading: false };
     this.branches = [];
+    this.latestCommits.clear();
+    this.stopDurationTimer();
     this.mergedIntoMain.clear();
     this.clearChecks();
   }
 
-  appendBranchPage(state: BranchPageState, page: GitLabPage<string>): void {
+  appendBranchPage(state: BranchPageState, page: GitLabBranchPage): void {
     if (state !== this.branchPage) {
       return;
     }
     state.page++;
     state.hasMore = page.hasMore;
     state.error = undefined;
+    this.updateLatestCommits(page);
     this.setBranches([...this.branches, ...page.items]);
   }
 
@@ -110,7 +135,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     return state;
   }
 
-  appendReleasePage(branch: string, state: ReleasePageState, branches: GitLabPage<string>, requests: GitLabPage<ReleaseMergeRequest>): void {
+  appendReleasePage(branch: string, state: ReleasePageState, branches: GitLabBranchPage, requests: GitLabPage<ReleaseMergeRequest>): void {
     if (this.releasePages.get(branch) !== state) {
       return;
     }
@@ -121,6 +146,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     state.moreRequests = requests.hasMore;
     state.hasMore = branches.hasMore || requests.hasMore;
     state.error = undefined;
+    this.updateLatestCommits(branches);
     this.setReadiness(branch, getReleaseFeatureStatuses(branch, state.branches, state.requests)
       .map(status => ({ ...status, pending: state.moreRequests })), false);
   }
@@ -307,6 +333,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
           };
         }
         this.markMergedIntoMain(item, status.branch);
+        this.describeLatestCommit(item, status.branch);
         return item;
       });
     result.push(...features);
@@ -357,9 +384,38 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
           arguments: [item]
         };
         this.markMergedIntoMain(item, branchPath);
+        this.describeLatestCommit(item, branchPath);
       }
       return item;
     });
+  }
+
+  private updateLatestCommits(page: GitLabBranchPage): void {
+    for (const commit of page.latestCommits ?? []) {
+      this.latestCommits.set(commit.branch, commit);
+    }
+    if (!this.durationTimer && this.latestCommits.size > 0) {
+      this.durationTimer = setInterval(() => this.refresh(), 60_000);
+      this.durationTimer.unref();
+    }
+  }
+
+  private describeLatestCommit(item: ReleaseReadinessTreeItem, branch: string): void {
+    const commit = this.latestCommits.get(branch);
+    if (!commit) {
+      return;
+    }
+    const author = commit.authorName || '作者未知';
+    const date = new Date(commit.committedDate);
+    const time = Number.isFinite(date.getTime())
+      ? date.toLocaleString('zh-CN', { hour12: false })
+      : '时间未知';
+    const duration = Number.isFinite(date.getTime()) ? formatUpdateDuration(commit.committedDate) : undefined;
+    item.description = [author, time, duration, item.description].filter(Boolean).join(' · ');
+    item.tooltip = `${item.tooltip}\n最新提交作者: ${author}\n提交时间（本地时区）: ${time}`;
+    if (Number.isFinite(date.getTime())) {
+      item.tooltip += `\n原始提交时间: ${commit.committedDate}\n${duration}`;
+    }
   }
 
   private markMergedIntoMain(item: ReleaseReadinessTreeItem, branch: string): void {
@@ -419,6 +475,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     // Invalidate in-flight reads so they cannot restore deleted branches.
     this.branchPage = { ...this.branchPage, loading: false };
     this.mergedIntoMain.delete(branch);
+    this.latestCommits.delete(branch);
     this.releasePages.delete(branch);
     this.checkingBranches.delete(branch);
     for (const [target, statuses] of this.statuses) {
@@ -489,6 +546,14 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   }
 
   dispose(): void {
+    this.stopDurationTimer();
     this.changeEmitter.dispose();
+  }
+
+  private stopDurationTimer(): void {
+    if (this.durationTimer) {
+      clearInterval(this.durationTimer);
+      this.durationTimer = undefined;
+    }
   }
 }

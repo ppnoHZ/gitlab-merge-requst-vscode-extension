@@ -56,3 +56,13 @@ export interface GitLabPage<T> {
   items: T[];
   hasMore: boolean;
 }
+
+export interface BranchLatestCommit {
+  branch: string;
+  authorName: string;
+  committedDate: string;
+}
+
+export interface GitLabBranchPage extends GitLabPage<string> {
+  latestCommits?: BranchLatestCommit[];
+}

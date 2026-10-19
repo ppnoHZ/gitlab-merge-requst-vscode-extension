@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as https from 'https';
 import { URL } from 'url';
-import { GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
+import { GitLabBranchPage, GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
 import { Logger } from './logger';
 import { ReleaseMergeRequest } from './releaseReadiness';
 
@@ -182,16 +182,30 @@ export class GitLabService {
     }
   }
 
-  async getProjectBranches(projectId: string | number, page = 1, search = ''): Promise<GitLabPage<string>> {
+  async getProjectBranches(projectId: string | number, page = 1, search = ''): Promise<GitLabBranchPage> {
     const encodedId = encodeURIComponent(String(projectId));
     const query = new URLSearchParams({ per_page: '100', page: String(page) });
     if (search) {
       query.set('search', search);
     }
-    const branches = await this.request<Array<{ name: string }>>(
+    const branches = await this.request<Array<{
+      name: string;
+      commit?: { author_name?: string; committed_date?: string };
+    }>>(
       `/projects/${encodedId}/repository/branches?${query}`
     );
-    return { items: branches.map(branch => branch.name), hasMore: branches.length === 100 };
+    const latestCommits = branches.map(branch => ({
+      branch: branch.name,
+      authorName: typeof branch.commit?.author_name === 'string' ? branch.commit.author_name.trim() : '',
+      committedDate: typeof branch.commit?.committed_date === 'string' ? branch.commit.committed_date : ''
+    }));
+    const incomplete = latestCommits.filter(commit =>
+      !commit.authorName || !commit.committedDate || !Number.isFinite(Date.parse(commit.committedDate))
+    );
+    if (incomplete.length > 0) {
+      Logger.warn(`GitLab 分支最新提交信息缺失或无效: ${incomplete.map(commit => commit.branch).join(', ')}`);
+    }
+    return { items: branches.map(branch => branch.name), hasMore: branches.length === 100, latestCommits };
   }
 
   async deleteBranch(

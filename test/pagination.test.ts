@@ -42,6 +42,23 @@ async function runTests() {
     assert.equal(urls.at(-1)?.searchParams.get('per_page'), '100');
     assert.equal(urls.at(-1)?.searchParams.get('search'), 'PROJ & 1');
   }
+  responseItems = [
+    {
+      name: 'feature/v1/PROJ-1',
+      commit: { author_name: ' Alice ', committed_date: '2026-10-19T11:00:00+08:00' }
+    },
+    { name: 'main', commit: { author_name: 'Bob', committed_date: 'invalid-date' } },
+    { name: 'release/v1' }
+  ];
+  const callsBeforeMetadata = urls.length;
+  const metadataPage = await service.getProjectBranches(1);
+  assert.equal(urls.length, callsBeforeMetadata + 1);
+  assert.deepEqual(metadataPage.latestCommits, [
+    { branch: 'feature/v1/PROJ-1', authorName: 'Alice', committedDate: '2026-10-19T11:00:00+08:00' },
+    { branch: 'main', authorName: 'Bob', committedDate: 'invalid-date' },
+    { branch: 'release/v1', authorName: '', committedDate: '' }
+  ]);
+  assert.deepEqual(metadataPage.items, ['feature/v1/PROJ-1', 'main', 'release/v1']);
   responseItems = [];
   await service.getMergeRequestsTargetingBranch(1, 'release/v1/hotfix', 3);
   assert.equal(urls.at(-1)?.searchParams.get('target_branch'), 'release/v1/hotfix');
