@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as https from 'https';
 import { URL } from 'url';
-import { GitLabBranchPage, GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult } from './types';
+import { GitLabBranchPage, GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult, ReviewDetails, ReviewDiffRefs, ReviewDiffVersion, ReviewMergeRequest, ReviewProject } from './types';
 import { Logger } from './logger';
 import { ReleaseMergeRequest } from './releaseReadiness';
 
@@ -113,6 +113,112 @@ export class GitLabService {
    */
   async getCurrentUser(): Promise<GitLabUser> {
     return this.request<GitLabUser>('/user');
+  }
+
+  async getReviewMergeRequests(userId: number): Promise<ReviewMergeRequest[]> {
+    const query = new URLSearchParams({
+      scope: 'all', state: 'opened', reviewer_id: String(userId),
+      order_by: 'updated_at', sort: 'desc'
+    });
+    const requests = await this.getAllPages<ReviewMergeRequest>(`/merge_requests?${query}`);
+    if (!requests.every(request =>
+      Number.isSafeInteger(request.id) && Number.isSafeInteger(request.iid) &&
+      Number.isSafeInteger(request.project_id) && typeof request.title === 'string' &&
+      typeof request.web_url === 'string' && /^https?:\/\//i.test(request.web_url)
+    )) {
+      throw new Error('GitLab 待审批 MR 列表格式无效。');
+    }
+    return [...new Map(requests.filter(request => request.state === 'opened')
+      .map(request => [request.id, request])).values()];
+  }
+
+  async hasUserApprovedMergeRequest(projectId: number, iid: number, userId: number): Promise<boolean> {
+    const response = await this.request<{ approved_by?: Array<{ user?: { id?: number } }> }>(
+      `/projects/${projectId}/merge_requests/${iid}/approvals`
+    );
+    if (!Array.isArray(response?.approved_by) ||
+      !response.approved_by.every(approval => Number.isSafeInteger(approval.user?.id))) {
+      throw new Error(`MR !${iid} 审批状态响应缺少有效 approved_by，无法确认是否待审批。`);
+    }
+    return response.approved_by.some(approval => approval.user?.id === userId);
+  }
+
+  async getReviewProject(projectId: number): Promise<ReviewProject> {
+    const project = await this.request<ReviewProject>(`/projects/${projectId}`);
+    if (project?.id !== projectId || typeof project.path_with_namespace !== 'string' ||
+      !project.path_with_namespace.trim()) {
+      throw new Error(`项目 ${projectId} 详情响应无效。`);
+    }
+    return project;
+  }
+
+  async getReviewDetails(projectId: number, iid: number): Promise<ReviewDetails> {
+    const details = await this.request<ReviewDetails>(`/projects/${projectId}/merge_requests/${iid}`);
+    const validSha = (sha: unknown) => typeof sha === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(sha);
+    if (details?.project_id !== projectId || details.iid !== iid ||
+      !validSha(details.sha) || !validSha(details.diff_refs?.head_sha) ||
+      !validSha(details.diff_refs?.base_sha) || !validSha(details.diff_refs?.start_sha) ||
+      details.sha !== details.diff_refs.head_sha ||
+      !Number.isSafeInteger(details.source_project_id) || details.source_project_id <= 0 ||
+      details.target_project_id !== projectId ||
+      !Array.isArray(details.reviewers) || !details.reviewers.every(user => Number.isSafeInteger(user?.id))) {
+      throw new Error(`MR !${iid} 代码版本尚未就绪或项目/Reviewer 信息无效，请刷新后重试。`);
+    }
+    return details;
+  }
+
+  async getReviewDiffVersion(projectId: number, iid: number, refs: ReviewDiffRefs): Promise<ReviewDiffVersion> {
+    const path = `/projects/${projectId}/merge_requests/${iid}/versions`;
+    const versions = await this.getAllPages<Omit<ReviewDiffVersion, 'diffs'>>(path);
+    const match = versions.find(version => version.head_commit_sha === refs.head_sha &&
+      version.base_commit_sha === refs.base_sha && version.start_commit_sha === refs.start_sha);
+    if (!match || !Number.isSafeInteger(match.id)) {
+      throw new Error(`MR !${iid} 没有匹配的 Diff 版本，请稍后刷新重试。`);
+    }
+    const version = await this.request<ReviewDiffVersion>(`${path}/${match.id}`);
+    if (version?.id !== match.id || version.head_commit_sha !== refs.head_sha ||
+      version.base_commit_sha !== refs.base_sha || version.start_commit_sha !== refs.start_sha ||
+      (version.state !== undefined && version.state !== 'collected') || !Array.isArray(version.diffs) ||
+      !version.diffs.every(file => typeof file.old_path === 'string' && file.old_path.length > 0 &&
+        typeof file.new_path === 'string' && file.new_path.length > 0 &&
+        typeof file.new_file === 'boolean' && typeof file.deleted_file === 'boolean' &&
+        typeof file.renamed_file === 'boolean')) {
+      throw new Error(`MR !${iid} Diff 版本无效或尚未生成完成。`);
+    }
+    return version;
+  }
+
+  async getReviewFileContent(projectId: number, filePath: string, sha: string): Promise<string> {
+    const query = new URLSearchParams({ ref: sha });
+    const file = await this.request<{ encoding?: string; content?: string }>(
+      `/projects/${projectId}/repository/files/${encodeURIComponent(filePath)}?${query}`
+    );
+    if (file?.encoding !== 'base64' || typeof file.content !== 'string') {
+      throw new Error(`无法读取文件内容: ${filePath}`);
+    }
+    const encoded = file.content.replace(/\s/g, '');
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.toString('base64') !== encoded) {
+      throw new Error(`文件 ${filePath} 的 Base64 内容无效，无法可靠展示 Diff。`);
+    }
+    if (bytes.includes(0)) {
+      throw new Error(`文件 ${filePath} 为二进制文件，请在 GitLab 中查看。`);
+    }
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error(`文件 ${filePath} 不是有效 UTF-8 文本，请在 GitLab 中查看。`);
+    }
+  }
+
+  async approveReview(projectId: number, iid: number, sha: string, userId: number): Promise<void> {
+    const result = await this.request<{ approved_by?: Array<{ user?: { id?: number } }> }>(
+      `/projects/${projectId}/merge_requests/${iid}/approve`,
+      { method: 'POST', body: { sha } }
+    );
+    if (!Array.isArray(result?.approved_by) || !result.approved_by.some(entry => entry.user?.id === userId)) {
+      throw new Error(`GitLab 未确认你对 MR !${iid} 的批准，请刷新审批状态，不要直接重复提交。`);
+    }
   }
 
   async getGitLabVersion(): Promise<{ version: string; revision?: string }> {

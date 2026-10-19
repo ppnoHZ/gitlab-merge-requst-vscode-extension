@@ -66,3 +66,55 @@ export interface BranchLatestCommit {
 export interface GitLabBranchPage extends GitLabPage<string> {
   latestCommits?: BranchLatestCommit[];
 }
+
+export interface ReviewMergeRequest {
+  id: number;
+  iid: number;
+  project_id: number;
+  title: string;
+  state: string;
+  web_url: string;
+  source_branch: string;
+  target_branch: string;
+  author: { name: string; username: string };
+  draft?: boolean;
+}
+
+export interface ReviewProject {
+  id: number;
+  path_with_namespace: string;
+  web_url: string;
+}
+
+export interface ReviewDiffRefs {
+  base_sha: string;
+  head_sha: string;
+  start_sha: string;
+}
+
+export interface ReviewDetails extends ReviewMergeRequest {
+  sha: string;
+  source_project_id: number;
+  target_project_id: number;
+  reviewers: Array<{ id: number }>;
+  diff_refs: ReviewDiffRefs;
+}
+
+export interface ReviewChangedFile {
+  old_path: string;
+  new_path: string;
+  new_file: boolean;
+  deleted_file: boolean;
+  renamed_file: boolean;
+}
+
+export interface ReviewDiffVersion {
+  id: number;
+  base_commit_sha: string;
+  head_commit_sha: string;
+  start_commit_sha: string;
+  state?: string;
+  real_size: string | number;
+  overflow?: boolean;
+  diffs: ReviewChangedFile[];
+}

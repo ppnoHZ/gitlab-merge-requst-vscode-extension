@@ -50,6 +50,7 @@ export const warningDialog = {
   onShow: undefined as (() => void) | undefined
 };
 export const informationMessages: string[] = [];
+export const errorMessages: string[] = [];
 export const titleInput = { value: undefined as string | undefined, titles: [] as string[] };
 export const targetPick = {
   value: undefined as string | undefined,
@@ -60,7 +61,20 @@ export const clipboard = {
   text: '',
   error: undefined as Error | undefined
 };
-export const Uri = { parse: (value: string) => value };
+export const Uri = {
+  parse: (value: string) => value,
+  from: (components: { scheme: string; path: string }) => ({
+    scheme: components.scheme,
+    path: components.path,
+    toString: () => `${components.scheme}:${encodeURI(components.path)}`
+  })
+};
+export const executedCommands: Array<{ command: string; args: unknown[] }> = [];
+export const commands = {
+  executeCommand: async (command: string, ...args: unknown[]) => {
+    executedCommands.push({ command, args });
+  }
+};
 export const env = {
   clipboard: {
     writeText: async (text: string) => {
@@ -70,10 +84,11 @@ export const env = {
       clipboard.text = text;
     }
   },
-  openExternal: async (uri: string) => { openedUrls.push(uri); }
+  openExternal: async (uri: string) => { openedUrls.push(uri); return true; }
 };
 
 export const window = {
+  showErrorMessage: async (message: string) => { errorMessages.push(message); },
   showQuickPick: async (items: Array<{ label: string; description?: string }>) => {
     targetPick.items = items;
     return items.find(item => item.label === targetPick.value);

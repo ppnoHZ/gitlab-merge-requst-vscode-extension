@@ -34,10 +34,45 @@
     "onCommand:gitlabMr.deleteBranch",
     "onCommand:gitlabMr.copyBranchName",
     "onView:gitlabMr.releaseReadiness",
+    "onView:gitlabMr.pendingReviews",
+    "onCommand:gitlabMr.refreshPendingReviews",
+    "onCommand:gitlabMr.openPendingReview",
+    "onCommand:gitlabMr.showPendingReviewChanges",
+    "onCommand:gitlabMr.openReviewDiff",
+    "onCommand:gitlabMr.approvePendingReview",
     "workspaceContains:.git"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "gitlabMr.showPendingReviewChanges",
+        "title": "Review Changes (查看 MR 变更)",
+        "category": "GitLab MR",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "gitlabMr.openReviewDiff",
+        "title": "Open MR File Diff (查看 MR 文件差异)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.approvePendingReview",
+        "title": "Approve MR (批准当前审阅版本)",
+        "category": "GitLab MR",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gitlabMr.refreshPendingReviews",
+        "title": "Refresh Pending Reviews (刷新待我审批的 MR)",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitlabMr.openPendingReview",
+        "title": "Open MR in Browser (在浏览器打开 MR)",
+        "category": "GitLab MR",
+        "icon": "$(link-external)"
+      },
       {
         "command": "gitlabMr.copyBranchName",
         "title": "Copy Branch Name (复制分支名称)",
@@ -225,7 +260,7 @@
       "activitybar": [
         {
           "id": "gitlabMr-releaseReadinessContainer",
-          "title": "上线检查",
+          "title": "GitLab 工作台",
           "icon": "media/release-readiness.svg",
           "order": 6
         }
@@ -235,11 +270,19 @@
       "gitlabMr-releaseReadinessContainer": [
         {
           "id": "gitlabMr.releaseReadiness",
-          "name": "上线检查"
+          "name": "分支管理"
+        },
+        {
+          "id": "gitlabMr.pendingReviews",
+          "name": "待我审批"
         }
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "gitlabMr.pendingReviews",
+        "contents": "按 Project 展示当前 GitLab 实例中指定你为 Reviewer 且尚未批准的开放 MR。\n[加载待我审批的 MR](command:gitlabMr.refreshPendingReviews)"
+      },
       {
         "view": "gitlabMr.releaseReadiness",
         "contents": "配置 GitLab Token 后自动加载远程分支，默认仅展示常用分支，按目录逐层展开。\n[加载并选择远程分支](command:gitlabMr.checkReleaseReadiness)\n[调整分支过滤](command:gitlabMr.filterReleaseBranches)"
@@ -247,6 +290,22 @@
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "gitlabMr.showPendingReviewChanges",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.openReviewDiff",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.openPendingReview",
+          "when": "false"
+        },
         {
           "command": "gitlabMr.copyBranchName",
           "when": "false"
@@ -270,6 +329,11 @@
       ],
       "view/title": [
         {
+          "command": "gitlabMr.refreshPendingReviews",
+          "when": "view == gitlabMr.pendingReviews",
+          "group": "navigation"
+        },
+        {
           "command": "gitlabMr.filterReleaseBranches",
           "when": "view == gitlabMr.releaseReadiness",
           "group": "navigation"
@@ -288,6 +352,26 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitlabMr.approvePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
+        },
+        {
+          "command": "gitlabMr.showPendingReviewChanges",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
+        },
+        {
+          "command": "gitlabMr.openPendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline"
+        },
         {
           "command": "gitlabMr.copyBranchName",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
@@ -348,7 +432,7 @@
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "npm test && npm run compile && npx --yes --package @vscode/vsce@4.0.0 vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js"
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

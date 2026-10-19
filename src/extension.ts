@@ -7,6 +7,7 @@ import { Logger } from './logger';
 import { getReleaseFeatureStatuses, getReleaseVersion } from './releaseReadiness';
 import { commonBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
 import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
+import { PendingReviewItem, PendingReviewsProvider } from './pendingReviewsView';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -15,6 +16,125 @@ export function activate(context: vscode.ExtensionContext) {
   Logger.info('GitLab Auto MR 插件已成功激活。');
 
   const tokenManager = new TokenManager(context);
+  const pendingReviews = new PendingReviewsProvider(async prompt => {
+    let token = await tokenManager.getToken();
+    if (!token && prompt) {
+      token = await tokenManager.promptForToken();
+    }
+    if (!token) {
+      return undefined;
+    }
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace?.uri)
+      .get<string>('instanceUrl', 'https://gitlab.com').trim();
+    if (instanceUrl === 'https://gitlab.com' && workspace) {
+      const git = new GitService(workspace.uri.fsPath);
+      if (await git.isGitRepo()) {
+        const { host } = git.parseGitLabRemote(await git.getRemoteUrl());
+        instanceUrl = `https://${host}`;
+      }
+    }
+    return new GitLabService(instanceUrl, token);
+  });
+  const pendingTreeView = vscode.window.createTreeView('gitlabMr.pendingReviews', {
+    treeDataProvider: pendingReviews,
+    showCollapseAll: true
+  });
+  const refreshPendingReviews = async (prompt = true) => {
+    await pendingReviews.refresh(prompt);
+    pendingTreeView.description = pendingReviews.summary;
+  };
+  const refreshPendingReviewsCmd = vscode.commands.registerCommand('gitlabMr.refreshPendingReviews', () =>
+    refreshPendingReviews()
+  );
+  const runReviewAction = async (title: string, action: () => Promise<void>) => {
+    try {
+      await action();
+    } catch (error) {
+      Logger.error(title, error);
+      vscode.window.showErrorMessage(`${title}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const loadReviewChanges = (item?: PendingReviewItem, reveal = true) => runReviewAction('加载 MR 变更失败', async () => {
+    if (!item) {
+      throw new Error('请选择待审批 MR。');
+    }
+    await pendingReviews.loadChanges(item);
+    if (reveal) {
+      await pendingTreeView.reveal(item, { expand: 1, select: true });
+    }
+  });
+  const showReviewChangesCmd = vscode.commands.registerCommand('gitlabMr.showPendingReviewChanges', loadReviewChanges);
+  const openReviewDiffCmd = vscode.commands.registerCommand('gitlabMr.openReviewDiff', (item?: PendingReviewItem) =>
+    runReviewAction('打开 MR 文件 Diff 失败', async () => {
+      if (!item) {
+        throw new Error('请选择 MR 变更文件。');
+      }
+      await pendingReviews.openDiff(item);
+    })
+  );
+  const approveReviewCmd = vscode.commands.registerCommand('gitlabMr.approvePendingReview', (item?: PendingReviewItem) =>
+    runReviewAction('批准 MR 失败', async () => {
+      if (!item) {
+        throw new Error('请选择待审批 MR。');
+      }
+      if (await pendingReviews.approve(item)) {
+        vscode.window.showInformationMessage(`已批准 MR !${item.request?.iid}，未执行合并。`);
+        await refreshPendingReviews(false);
+      }
+    })
+  );
+  const openPendingReviewCmd = vscode.commands.registerCommand('gitlabMr.openPendingReview', async (item?: PendingReviewItem) => {
+    try {
+      const url = item?.request?.web_url;
+      if (!url || !/^https?:\/\//i.test(url)) {
+        throw new Error('请选择有效的待审批 MR。');
+      }
+      if (!await vscode.env.openExternal(vscode.Uri.parse(url))) {
+        throw new Error('无法打开浏览器中的 MR 页面。');
+      }
+    } catch (error) {
+      Logger.error('打开待审批 MR 失败', error);
+      vscode.window.showErrorMessage(`打开待审批 MR 失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  const pendingVisibility = pendingTreeView.onDidChangeVisibility(event => {
+    if (event.visible && !pendingReviews.loaded) {
+      void refreshPendingReviews(false);
+    }
+  });
+  const pendingConnectionChanged = vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+      pendingReviews.reset();
+      pendingTreeView.description = undefined;
+      if (pendingTreeView.visible) {
+        void refreshPendingReviews(false);
+      }
+    }
+  });
+  context.subscriptions.push(
+    pendingReviews, pendingTreeView, refreshPendingReviewsCmd, openPendingReviewCmd,
+    showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd,
+    vscode.workspace.registerTextDocumentContentProvider('gitlab-mr-review', pendingReviews.review),
+    pendingTreeView.onDidExpandElement(event => {
+      if (event.element.kind === 'request') {
+        void loadReviewChanges(event.element, false);
+      }
+    }),
+    pendingVisibility, pendingConnectionChanged,
+    context.secrets.onDidChange(event => {
+      if (event.key === 'gitlabMr.personalAccessToken') {
+        pendingReviews.reset();
+        pendingTreeView.description = undefined;
+        if (pendingTreeView.visible) {
+          void refreshPendingReviews(false);
+        }
+      }
+    })
+  );
+  if (pendingTreeView.visible) {
+    void refreshPendingReviews(false);
+  }
   const branchFilterStateKey = 'gitlabMr.releaseBranchFilters';
   const releaseProvider = new ReleaseReadinessProvider(
     context.workspaceState.get<string[] | null>(branchFilterStateKey, commonBranchFilters)
@@ -172,7 +292,7 @@ export function activate(context: vscode.ExtensionContext) {
           selectBranch: false
         });
       } catch (error: any) {
-        Logger.error('从上线检查视图创建 MR 失败', error);
+        Logger.error('从分支管理视图创建 MR 失败', error);
         vscode.window.showErrorMessage(`创建 Merge Request 失败: ${error.message}`, '查看详细日志')
           .then(selection => selection === '查看详细日志' && Logger.show());
       }
@@ -334,7 +454,7 @@ export async function handleCreateMainMergeRequest(
   const branch = item?.kind === 'branch' ? item.branchPath
     : item?.kind === 'feature' ? item.status?.branch : undefined;
   if (!branch || branch === 'main') {
-    vscode.window.showWarningMessage('请在上线检查视图中选择 main 以外的分支。');
+    vscode.window.showWarningMessage('请在分支管理视图中选择 main 以外的分支。');
     return;
   }
   const workspace = vscode.workspace.workspaceFolders?.[0];
