@@ -1,5 +1,7 @@
 # GitLab Auto MR (VS Code 扩展)
 
+<img src="media/icon.png" alt="GitLab Merge Request Tool 图标：分支汇合与审核通过" width="96" height="96">
+
 在 VS Code 中进行分支合并时，根据当前源分支与目标分支自动生成规范的 Merge Request **Title**、**Description**，并自动指定 **Reviewer**。
 
 完整操作步骤与常见问题见 [使用说明](./USER_GUIDE.md)。
