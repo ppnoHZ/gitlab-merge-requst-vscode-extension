@@ -1,3 +1,4 @@
+import assert from 'assert';
 import { TemplateEngine } from '../src/templateEngine';
 import { GitCommitInfo } from '../src/types';
 import { getFeatureVersion, getReleaseFeatureStatuses, getReleaseVersion } from '../src/releaseReadiness';
@@ -20,6 +21,28 @@ function runTests() {
     author: 'developer',
     date: '2026-10-14'
   };
+
+  for (const count of [0, 1, 10, 11, 50]) {
+    const commits = Array.from({ length: count }, (_, index) => ({
+      ...dummyCommit,
+      shortHash: `hash${index}`,
+      title: `Commit ${index}`
+    }));
+    const description = TemplateEngine.generateDescription('feature/test', 'main', commits, ['src/example.ts']);
+    const history = description.split(`## 📝 提交历史 (${count} 个 commit)\n`)[1].split('## 📁 变动文件')[0];
+    assert.equal(history.includes('<details><summary>点击展开提交历史</summary>\n\n'), count > 10);
+    assert.equal(history.includes('</details>'), count > 10);
+    assert.ok(!history.includes('<details open'));
+    const expectedList = commits.map(commit =>
+      `- \`${commit.shortHash}\` **${commit.title}** (${commit.author}, ${commit.date})`
+    ).join('\n');
+    assert.equal(history, count > 10
+      ? `<details><summary>点击展开提交历史</summary>\n\n${expectedList}\n\n</details>\n\n`
+      : `${expectedList || '- 暂无未合并的提交记录'}\n\n`);
+    assert.ok(description.includes('## 📁 变动文件 (1 个文件)\n<details><summary>点击展开变动文件列表</summary>'));
+    assert.ok(description.includes('## 📋 自检清单'));
+  }
+  console.log('[PASS] 提交历史：0/1/10 条直接展示，11/50 条完整折叠，保持顺序及其他描述区块');
 
   const tests = [
     {
@@ -269,7 +292,6 @@ function runIssueLinkTests() {
   console.log('[PASS] 上线检查：正则匹配 Jira、ITSM 和可扩展的额外工单链接');
 }
 
-import assert from 'assert';
 runReleaseReadinessTests();
 runIssueLinkTests();
 
