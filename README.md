@@ -28,6 +28,14 @@ pnpm test
 pnpm run build
 ```
 
+`pnpm test` 仅运行单元测试，不启动本机 HTTP 服务或执行 Git 集成检查。需要本机网络/Git 的 API 集成测试单独运行：
+
+```sh
+pnpm run test:integration
+```
+
+集成测试不作为 VSIX 发布前的必跑步骤；显式执行时，失败仍返回非零退出码，不把断言或接口错误当作成功。
+
 首次运行或修改共享核心后，先执行 `pnpm run build:core`；根目录 `build`、`compile`、`test`、`dev`、`dev:web`、`dev:api` 和扩展打包命令均会自动构建核心。共享包入口指向 `dist`，仅安装依赖而未构建核心时无法解析该包；递归构建按 workspace 依赖顺序先构建核心，再构建应用。
 
 ### Web 与 API
@@ -54,6 +62,8 @@ pnpm run package:vsix
 ```
 
 VSIX 输出到 `apps/vscode/`，构建时将共享核心打入扩展 bundle，不需要额外安装共享包。扩展功能说明见 [扩展 README](apps/vscode/README.md) 和 [用户指南](apps/vscode/USER_GUIDE.md)。
+
+VSIX 发布前只执行扩展的 `test:publish` 本地逻辑测试和类型检查，不运行网络请求相关测试（包括 mock 接口测试）。完整扩展单元测试仍可通过 `pnpm --filter gitlab-auto-merge-request test` 手动执行；HTTP/Git 集成测试使用独立的 `pnpm run test:integration`。
 
 ## 约定
 

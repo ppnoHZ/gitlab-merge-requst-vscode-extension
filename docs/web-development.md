@@ -56,6 +56,8 @@ cp apps/api/.env.example apps/api/.env
 
 ## 验证与边界
 
-根目录执行 `pnpm run compile`、`pnpm test`、`pnpm run build`。API 测试使用真实本地 HTTP 模拟 GitLab，覆盖授权/PKCE/state、Token 刷新、权限、分页和会话退出；Git 测试通过带鉴权的 HTTP Git 服务验证正常合并、squash/rebase、冲突、未合并及远程新增提交。Web 测试覆盖请求失败、未配置页面、链接协议及筛选。
+根目录执行 `pnpm run compile`、`pnpm test`、`pnpm run build`。默认 `pnpm test` 只运行单元测试，API 配置校验无需监听端口或访问网络。Web 测试覆盖请求失败、未配置页面、链接协议及筛选。
+
+本机 HTTP/Git 集成测试通过 `pnpm run test:integration` 单独执行，不作为发布前单元测试的阻断项。API 集成测试使用真实本地 HTTP 模拟 GitLab，覆盖健康检查、授权/PKCE/state、Token 刷新、权限、分页和会话退出；Git 测试通过带鉴权的 HTTP Git 服务验证正常合并、squash/rebase、冲突、未合并及远程新增提交。显式运行集成测试时，失败仍返回非零退出码。
 
 这些测试不是公司 GitLab 实例联调。目前公司配置按要求留空，实际 OAuth 回调、证书与访问权限需填好配置后验证。CI、审批和部署状态不在上线判断范围内。共享核心修改后需重新 `pnpm run build:core`；现有开发启动器仅监视 Web 和 API。

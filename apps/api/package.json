@@ -8,7 +8,8 @@
     "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
     "start": "node dist/server.js",
     "compile": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/config.test.ts",
+    "test:integration": "tsx --test test/app.test.ts test/gitlab-flow.test.ts test/repository.test.ts"
   },
   "dependencies": {   "@gitlab-workbench/core": "workspace:*" },
   "devDependencies": { "tsx": "^4.20.0" }

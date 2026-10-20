@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "compile": "pnpm run build:core && pnpm -r compile",
     "test": "pnpm run build:core && pnpm -r test",
+    "test:integration": "pnpm run build:core && pnpm --filter @gitlab-workbench/api test:integration",
     "dev": "pnpm run build:core && node scripts/dev.mjs",
     "dev:web": "pnpm run build:core && pnpm --filter @gitlab-workbench/web dev",
     "dev:api": "pnpm run build:core && pnpm --filter @gitlab-workbench/api dev",

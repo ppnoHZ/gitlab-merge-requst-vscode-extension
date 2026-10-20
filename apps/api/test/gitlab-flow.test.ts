@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { createApp } from '../src/app';
-import { readGitLabConfig } from '../src/config';
 import type { ReleaseOverviewSnapshot, WebStatus } from '@gitlab-workbench/core';
 
 async function listen(server: Server): Promise<string> {
@@ -124,13 +123,4 @@ test('OAuth through GitLab HTTP to project/branch/MR overview; permissions, expi
     const revokedStatus = await (await fetch(`${appBase}/api/status`, { headers: { cookie: expiring } })).json() as WebStatus;
     assert.equal(revokedStatus.gitlab.connected, false);
   } finally { await close(app); await close(upstream); }
-});
-
-test('configuration reserves unset fields and rejects unsafe/incomplete redirects', () => {
-  assert.equal(readGitLabConfig({}), undefined);
-  assert.throws(() => readGitLabConfig({ GITLAB_URL: 'https://gitlab.example.com' }), /incomplete/);
-  const values = { GITLAB_URL: 'https://gitlab.example.com', GITLAB_CLIENT_ID: 'id', GITLAB_CLIENT_SECRET: 'secret', GITLAB_REDIRECT_URI: 'http://127.0.0.1:5173/api/auth/callback', WEB_ORIGIN: 'http://127.0.0.1:5173' };
-  assert.equal(readGitLabConfig(values)?.secureCookies, false);
-  assert.throws(() => readGitLabConfig({ ...values, GITLAB_URL: 'http://gitlab.example.com' }), /HTTPS/);
-  assert.throws(() => readGitLabConfig({ ...values, GITLAB_REDIRECT_URI: 'https://evil.example.com/api/auth/callback' }), /callback/);
 });
