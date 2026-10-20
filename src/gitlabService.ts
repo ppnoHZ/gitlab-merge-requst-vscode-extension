@@ -164,8 +164,10 @@ export class GitLabService {
     return project;
   }
 
-  async getReviewDetails(projectId: number, iid: number): Promise<ReviewDetails> {
-    const details = await this.request<ReviewDetails>(`/projects/${projectId}/merge_requests/${iid}`);
+  async getReviewDetails(projectId: number, iid: number, recheckMergeStatus = false): Promise<ReviewDetails> {
+    const details = await this.request<ReviewDetails>(
+      `/projects/${projectId}/merge_requests/${iid}${recheckMergeStatus ? '?with_merge_status_recheck=true' : ''}`
+    );
     const validSha = (sha: unknown) => typeof sha === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(sha);
     if (details?.project_id !== projectId || details.iid !== iid ||
       !validSha(details.sha) || !validSha(details.diff_refs?.head_sha) ||
@@ -231,6 +233,20 @@ export class GitLabService {
       );
       if (!Array.isArray(result?.approved_by) || !result.approved_by.some(entry => entry.user?.id === userId)) {
         throw new AuditApiError(`GitLab 未确认你对 MR !${iid} 的批准，请刷新审批状态，不要直接重复提交。`);
+      }
+    });
+  }
+
+  async mergeReview(projectId: number, iid: number, sha: string, userId: number): Promise<void> {
+    await Audit.sensitive('mr.merge', 'high', {
+      ...this.auditContext, project: projectId, mr: iid, sha, userId
+    }, async () => {
+      const result = await this.request<ReviewMergeRequest & { sha?: string }>(
+        `/projects/${projectId}/merge_requests/${iid}/merge`,
+        { method: 'PUT', body: { sha, merge_when_pipeline_succeeds: false, auto_merge: false } }
+      );
+      if (result?.project_id !== projectId || result.iid !== iid || result.state !== 'merged' || result.sha !== sha) {
+        throw new AuditApiError(`GitLab 未确认 MR !${iid} 已立即合并，请在 GitLab 核对结果，不要重复提交。`);
       }
     });
   }

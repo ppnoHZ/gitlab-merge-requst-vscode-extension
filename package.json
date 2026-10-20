@@ -41,6 +41,7 @@
     "onCommand:gitlabMr.showPendingReviewChanges",
     "onCommand:gitlabMr.openReviewDiff",
     "onCommand:gitlabMr.approvePendingReview",
+    "onCommand:gitlabMr.mergePendingReview",
     "onView:gitlabMr.auditHistory",
     "workspaceContains:.git"
   ],
@@ -95,6 +96,12 @@
         "command": "gitlabMr.openReviewDiff",
         "title": "Open MR File Diff (查看 MR 文件差异)",
         "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.mergePendingReview",
+        "title": "Merge MR (立即合并已审阅版本)",
+        "category": "GitLab MR",
+        "icon": "$(git-merge)"
       },
       {
         "command": "gitlabMr.approvePendingReview",
@@ -335,6 +342,7 @@
     ],
     "menus": {
       "commandPalette": [
+        { "command": "gitlabMr.mergePendingReview", "when": "false" },
         { "command": "gitlabMr.showAuditOperation", "when": "false" },
         { "command": "gitlabMr.nextAuditPage", "when": "false" },
         { "command": "gitlabMr.previousAuditPage", "when": "false" },
@@ -420,6 +428,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "gitlabMr.mergePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline@2"
+        },
+        {
+          "command": "gitlabMr.mergePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
+        },
         {
           "command": "gitlabMr.approvePendingReview",
           "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",

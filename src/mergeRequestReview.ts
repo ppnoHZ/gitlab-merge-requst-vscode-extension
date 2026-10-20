@@ -131,9 +131,73 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
     }, () => this.approveAudited(request, service, userId));
   }
 
+  private checkReviewVersion(request: ReviewMergeRequest, snapshot: ReviewSnapshot, current: ReviewDetails): void {
+    if (current.diff_refs.head_sha !== snapshot.details.diff_refs.head_sha ||
+      current.diff_refs.base_sha !== snapshot.details.diff_refs.base_sha ||
+      current.diff_refs.start_sha !== snapshot.details.diff_refs.start_sha ||
+      current.source_project_id !== snapshot.details.source_project_id ||
+      current.target_project_id !== snapshot.details.target_project_id ||
+      current.source_branch !== snapshot.details.source_branch ||
+      current.target_branch !== snapshot.details.target_branch) {
+      this.snapshots.delete(request);
+      throw new Error('MR 代码已更新或合并方向已变更，未执行操作。请刷新并重新审阅最新变更。');
+    }
+  }
+
+  async merge(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
+    return Audit.operation('mr.merge', 'high', {
+      ...service.auditContext, project: request.project_id, mr: request.iid, userId, source: 'command'
+    }, async () => {
+      if (this.approving.has(request)) {
+        throw new Error('该 MR 正在批准中或合并中，请勿重复操作。');
+      }
+      const snapshot = this.snapshots.get(request);
+      if (!snapshot) {
+        throw new Error('请先展开 MR 并查看变更，再合并所审阅的版本。');
+      }
+      if (!snapshot.complete) {
+        throw new Error('GitLab 返回的变更列表不完整，请在浏览器中完成审阅和合并。');
+      }
+      const generation = this.generation;
+      this.approving.add(request);
+      try {
+        const answer = await vscode.window.showWarningMessage(
+          `立即合并 MR !${request.iid}「${request.title}」？\nProject ${request.project_id}\n${snapshot.details.source_branch} → ${snapshot.details.target_branch}\n审阅版本: ${snapshot.details.diff_refs.head_sha}\n请确认已审阅该版本所有变更。此操作写入目标分支，不自动批准、不等待流水线；沿用 MR 已有 squash 和删除源分支选项。`,
+          { modal: true }, 'Merge（合并）'
+        );
+        if (answer !== 'Merge（合并）') { return false; }
+        await Audit.note('confirmed', {
+          sha: snapshot.details.diff_refs.head_sha, baseSha: snapshot.details.diff_refs.base_sha,
+          sourceBranch: snapshot.details.source_branch, targetBranch: snapshot.details.target_branch
+        });
+        if (generation !== this.generation) {
+          throw new Error('审阅列表或 GitLab 连接已更新，已取消合并，请重新查看变更。');
+        }
+        const current = await service.getReviewDetails(request.project_id, request.iid, true);
+        if (generation !== this.generation) {
+          throw new Error('审阅列表或 GitLab 连接已更新，已取消合并。');
+        }
+        if (current.state !== 'opened' || !current.reviewers.some(user => user.id === userId)) {
+          throw new Error('MR 已关闭、合并或你已不再是 Reviewer，请刷新。');
+        }
+        this.checkReviewVersion(request, snapshot, current);
+        if (current.draft === true || current.work_in_progress === true ||
+          current.has_conflicts !== false || current.detailed_merge_status !== 'mergeable' ||
+          current.user?.can_merge !== true) {
+          throw new Error(`GitLab 未确认此 MR 可立即合并（${current.detailed_merge_status ?? '状态未知'}）。请检查草稿、权限、冲突、审批及流水线条件后刷新；不会自动批准或排队合并。`);
+        }
+        await service.mergeReview(request.project_id, request.iid, snapshot.details.diff_refs.head_sha, userId);
+        this.snapshots.delete(request);
+        return true;
+      } finally {
+        this.approving.delete(request);
+      }
+    });
+  }
+
   private async approveAudited(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
     if (this.approving.has(request)) {
-      throw new Error('该 MR 正在批准中，请勿重复操作。');
+      throw new Error('该 MR 正在批准中或合并中，请勿重复操作。');
     }
     const snapshot = this.snapshots.get(request);
     if (!snapshot) {
@@ -162,12 +226,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
       if (current.state !== 'opened' || !current.reviewers.some(user => user.id === userId)) {
         throw new Error('MR 已关闭、合并或你已不再是 Reviewer，请刷新。');
       }
-      if (current.diff_refs.head_sha !== snapshot.details.diff_refs.head_sha ||
-        current.diff_refs.base_sha !== snapshot.details.diff_refs.base_sha ||
-        current.diff_refs.start_sha !== snapshot.details.diff_refs.start_sha) {
-        this.snapshots.delete(request);
-        throw new Error('MR 代码已更新，未批准。请刷新并重新审阅最新变更。');
-      }
+      this.checkReviewVersion(request, snapshot, current);
       if (generation !== this.generation) {
         throw new Error('审阅列表或 GitLab 连接已更新，已取消批准。');
       }

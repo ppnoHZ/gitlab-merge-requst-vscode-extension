@@ -120,6 +120,17 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+  const mergeReviewCmd = registerCommand('gitlabMr.mergePendingReview', (item?: PendingReviewItem) =>
+    runReviewAction('合并 MR 失败', async () => {
+      if (!item) {
+        throw new Error('请选择待审批 MR。');
+      }
+      if (await pendingReviews.merge(item)) {
+        vscode.window.showInformationMessage(`MR !${item.request?.iid} 已合并。`);
+        await refreshPendingReviews(false);
+      }
+    })
+  );
   const openPendingReviewCmd = registerCommand('gitlabMr.openPendingReview', async (item?: PendingReviewItem) => {
     try {
       const url = item?.request?.web_url;
@@ -151,7 +162,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(
     pendingReviews, pendingTreeView, refreshPendingReviewsCmd, openPendingReviewCmd,
-    showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd,
+    showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd, mergeReviewCmd,
     vscode.workspace.registerTextDocumentContentProvider('gitlab-mr-review', pendingReviews.review),
     pendingTreeView.onDidExpandElement(event => {
       if (event.element.kind === 'request') {
