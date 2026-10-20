@@ -98,6 +98,10 @@ export interface ReviewDetails extends ReviewMergeRequest {
   target_project_id: number;
   reviewers: Array<{ id: number }>;
   diff_refs: ReviewDiffRefs;
+  detailed_merge_status?: string;
+  has_conflicts?: boolean;
+  work_in_progress?: boolean;
+  user?: { can_merge?: boolean };
 }
 
 export interface ReviewChangedFile {

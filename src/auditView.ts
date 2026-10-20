@@ -104,7 +104,7 @@ export class AuditView implements vscode.TreeDataProvider<AuditItem> {
   async filterHistory(): Promise<void> {
     const field = await vscode.window.showQuickPick([
       { label: 'project', description: '项目 ID 或路径' }, { label: 'actor', description: '操作系统用户 / GitLab 用户' },
-      { label: 'action', description: '操作类型，例如 branch.delete / mr.approve / mr.create' },
+      { label: 'action', description: '操作类型，例如 branch.delete / mr.approve / mr.merge / mr.create' },
       { label: 'risk', description: 'normal / sensitive / high' },
       { label: 'phase', description: 'success / failed / unknown / blocked / cancelled / unresolved 等' },
       { label: 'search', description: '分支、MR、文件等关键词' },

@@ -1,5 +1,7 @@
 # GitLab Auto MR (VS Code 扩展)
 
+<img src="media/icon.png" alt="GitLab Merge Request Tool 图标：分支汇合与审核通过" width="96" height="96">
+
 在 VS Code 中进行分支合并时，根据当前源分支与目标分支自动生成规范的 Merge Request **Title**、**Description**，并自动指定 **Reviewer**。
 
 完整操作步骤与常见问题见 [使用说明](./USER_GUIDE.md)。
@@ -20,8 +22,8 @@
 8. **手动清理已合入分支**：默认关闭；启用后可删除最新代码已全部合入远程 `main` 的分支，需二次确认和实时检查。禁止删除 main、默认分支和受保护分支，保留本地分支。
 9. **复制分支名称**：点击分支行内复制按钮或右键“复制分支名称”，将包含完整路径的分支名复制到剪贴板；支持远程分支和 release 下的 feature 结果。
 10. **最新提交信息**：分支名称后展示“作者名 · 提交时间 · 几分钟前/几小时前/几天前更新”，每分钟自动刷新时间间隔，不额外请求 GitLab，保留原有状态标记。支持远程列表及 release 下已加载的 feature 分支，不查询分支创建活动。
-11. **GitLab 工作台与待我审批**：活动栏“GitLab 工作台”下提供“分支管理”和“待我审批”。待审批 MR 按 Project 分组，点击展开变更文件，在 VS Code 中查看只读双栏 Diff；支持二次确认后批准所审阅的提交版本，代码变化时阻止批准，不执行合并，并保留浏览器入口。
-12. **独立本地操作审计**：“操作审计”视图支持历史分页、组合筛选、操作时间线、CSV / JSONL 导出和完整性校验。删除分支、Approve、创建 MR 与本扩展保存/清除 Token 前必须将准备记录 fsync 落盘；写入失败则不发出操作，远端成功后记录失败会明确提示并暂停后续敏感操作。日志不写入 VS Code 或项目目录，正常卸载扩展 / VS Code 不会随之删除。
+11. **GitLab 工作台与待我审批**：待审批 MR 按 Project 分组，直接展示 `!IID`、标题、源 → 目标分支和提交人，悬停提供全局 ID；点击展开变更文件，在 VS Code 中查看只读双栏 Diff。支持独立的 Approve 与 Merge 按钮，均需人工确认并绑定审阅 SHA；Merge 仅在 GitLab 明确确认可立即合并且本人有权限时执行，不自动批准或等待流水线，版本/方向变化则阻止，并保留浏览器入口。视图仍不展示本人已批准的 MR。
+12. **独立本地操作审计**：“操作审计”视图支持历史分页、组合筛选、操作时间线、CSV / JSONL 导出和完整性校验。删除分支、Approve、Merge、创建 MR 与本扩展保存/清除 Token 前必须将准备记录 fsync 落盘；写入失败则不发出操作，远端成功后记录失败会明确提示并暂停后续敏感操作。日志不写入 VS Code 或项目目录，正常卸载扩展 / VS Code 不会随之删除。
 
 审计目录位于扩展运行主机：Linux 为 `~/.local/state/gitlab-mr-tool/audit/`，macOS 为 `~/Library/Application Support/GitLab MR Tool/audit/`，Windows 为 `%LOCALAPPDATA%\GitLab MR Tool\audit\`。不提供清空按钮，不自动过期删除；SSH / WSL 日志位于远端，容器须自行挂载持久卷。目录路径和用量可在视图查看。
 
@@ -111,8 +113,7 @@ main 标记需要 Git 2.38+ 和可用的 origin 拉取权限。首次加载、�
    npx @vscode/vsce package
    ```
    生成 `.vsix` 文件后，在 VS Code 扩展面板中点击右上角 `...` -> `从 VSIX 安装...` 即可完成本地安装。
-#   g i t l a b - m e r g e - r e q u s t - v s c o d e - e x t e n s i o n  
- 
+
 ### 上线总览
 
 在「GitLab 工作台 → 上线总览」点击刷新，汇总当前工作区第一个 Git 仓库的上线版本。需要已配置 GitLab Token，私有实例沿用现有实例地址配置。
