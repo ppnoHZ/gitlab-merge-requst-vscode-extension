@@ -316,12 +316,20 @@ export class TemplateEngine {
     lines.push('');
 
     lines.push(`## 📝 提交历史 (${commits.length} 个 commit)`);
+    if (commits.length > 10) {
+      lines.push('<details><summary>点击展开提交历史</summary>');
+      lines.push('');
+    }
     if (commits.length > 0) {
       for (const commit of commits) {
         lines.push(`- \`${commit.shortHash}\` **${commit.title}** (${commit.author}, ${commit.date})`);
       }
     } else {
       lines.push(`- 暂无未合并的提交记录`);
+    }
+    if (commits.length > 10) {
+      lines.push('');
+      lines.push('</details>');
     }
     lines.push('');
 

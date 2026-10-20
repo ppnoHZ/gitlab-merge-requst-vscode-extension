@@ -117,9 +117,18 @@ async function runTests(): Promise<void> {
   assert.equal(mr.command?.arguments?.[0], mr);
   assert.equal(provider.getChildren(mr)[0].command?.command, 'gitlabMr.showPendingReviewChanges');
   await assert.rejects(provider.approve(mr), /请先展开 MR/);
+  await assert.rejects(provider.merge(mr), /请先展开 MR/);
   assert.equal(mr.id, 'pending-review:1:1');
+  assert.match(String(mr.label), /^!1 Review 1$/);
+  assert.match(String(mr.description), /feature\/v1\/PROJ-1 → release\/v1.*提交人: Author \(@author\)/);
+  assert.match(String(mr.tooltip), /MR: !1 · ID: 1/);
   assert.match(String(mr.tooltip), /feature\/v1\/PROJ-1 → release\/v1/);
   assert.equal(roots[0].description, '2 个待审批');
+  const mergeManifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.ok(mergeManifest.contributes.commands.some((entry: { command: string }) =>
+    entry.command === 'gitlabMr.mergePendingReview'));
+  assert.equal(mergeManifest.contributes.menus['view/item/context'].filter((entry: { command: string; when: string }) =>
+    entry.command === 'gitlabMr.mergePendingReview' && entry.when.includes('pendingReviewRequest')).length, 2);
 
   failApproval = true;
   await provider.refresh();

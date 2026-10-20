@@ -5,6 +5,7 @@ import { MergeRequestReview } from '../src/mergeRequestReview';
 import { PendingReviewsProvider } from '../src/pendingReviewsView';
 import { ReviewChangedFile, ReviewDetails, ReviewDiffVersion } from '../src/types';
 import { executedCommands, warningDialog } from './vscodeMock';
+import { Audit } from '../src/audit';
 
 const base = 'a'.repeat(40);
 const head = 'b'.repeat(40);
@@ -201,12 +202,121 @@ async function runTests(): Promise<void> {
   assert.equal(files[0].command?.command, 'gitlabMr.openReviewDiff');
   await provider.openDiff(files[0]);
   assert.equal(await provider.approve(mr), true);
+  let merges = 0;
+  service.mergeReview = async (project, iid, sha, userId) => {
+    assert.deepEqual([project, iid, sha, userId], [2, 1, head, 7]);
+    merges++;
+  };
+  await assert.rejects(new MergeRequestReview().merge(details, service, 7), /先展开/);
+  warningDialog.value = undefined;
+  assert.equal(await provider.merge(mr), false);
+  assert.equal(merges, 0);
+  warningDialog.value = 'Merge（合并）';
+  const ready: ReviewDetails = { ...details, detailed_merge_status: 'mergeable',
+    has_conflicts: false, user: { can_merge: true } };
+  for (const blocked of [
+    details,
+    { ...ready, detailed_merge_status: 'not_approved' },
+    { ...ready, detailed_merge_status: 'ci_still_running' },
+    { ...ready, detailed_merge_status: 'checking' },
+    { ...ready, detailed_merge_status: 'discussions_not_resolved' },
+    { ...ready, has_conflicts: true },
+    { ...ready, has_conflicts: undefined },
+    { ...ready, user: { can_merge: false } },
+    { ...ready, user: undefined },
+    { ...ready, draft: true },
+    { ...ready, work_in_progress: true }
+  ]) {
+    current = blocked;
+    await assert.rejects(provider.merge(mr), /未确认此 MR 可立即合并/);
+    assert.equal(merges, 0);
+  }
+  current = { ...ready, state: 'merged' };
+  await assert.rejects(provider.merge(mr), /已关闭/);
+  current = { ...ready, reviewers: [] };
+  await assert.rejects(provider.merge(mr), /Reviewer/);
+  for (const changed of [
+    { ...ready, diff_refs: { ...ready.diff_refs, head_sha: updated } },
+    { ...ready, diff_refs: { ...ready.diff_refs, base_sha: updated } },
+    { ...ready, diff_refs: { ...ready.diff_refs, start_sha: updated } },
+    { ...ready, target_branch: 'main' },
+    { ...ready, source_branch: 'feature/other' },
+    { ...ready, source_project_id: 99 }
+  ]) {
+    current = changed;
+    await assert.rejects(provider.merge(mr), /代码已更新或合并方向已变更/);
+    current = ready;
+    await provider.review.load(details, service);
+    assert.equal(merges, 0);
+  }
+  warningDialog.onShow = () => provider.review.reset();
+  await assert.rejects(provider.merge(mr), /已取消合并/);
+  warningDialog.onShow = undefined;
+  await provider.review.load(details, service);
+  service.getReviewDetails = async () => {
+    provider.review.reset();
+    return ready;
+  };
+  await assert.rejects(provider.merge(mr), /已取消合并/);
+  assert.equal(merges, 0);
+  service.getReviewDetails = async () => ready;
+  await provider.review.load(details, service);
+  service.getReviewDetails = async (_project, _iid, recheck) => {
+    assert.equal(recheck, true);
+    return ready;
+  };
+  const firstMerge = provider.merge(mr);
+  await assert.rejects(provider.merge(mr), /正在批准中或合并中/);
+  assert.equal(await firstMerge, true);
+  assert.equal(merges, 1);
+  await assert.rejects(provider.merge(mr), /先展开/);
+  service.getReviewDetails = async () => ready;
+  currentVersion = { ...version, overflow: true };
+  await provider.review.load(details, service);
+  await assert.rejects(provider.merge(mr), /不完整/);
+  assert.equal(merges, 1);
   provider.reset();
   await assert.rejects(provider.openDiff(files[0]), /已失效/);
   await assert.rejects(provider.approve(mr), /已失效/);
+  await assert.rejects(provider.merge(mr), /已失效/);
   provider.dispose();
+
+  const api = new GitLabService('https://gitlab.example.com', 'test-token');
+  let mergeStatus = 200;
+  let mergeResponse: unknown = { ...ready, state: 'merged' };
+  let recheckSeen = false;
+  let putCount = 0;
+  axios.defaults.adapter = async config => {
+    const url = new URL(config.url!);
+    if (config.method === 'get') {
+      recheckSeen = url.searchParams.get('with_merge_status_recheck') === 'true';
+      return { config, status: 200, statusText: '', headers: {}, data: JSON.stringify(ready) };
+    }
+    assert.equal(config.method, 'put');
+    assert.equal(url.pathname, '/api/v4/projects/2/merge_requests/1/merge');
+    assert.deepEqual(JSON.parse(config.data), { sha: head, merge_when_pipeline_succeeds: false, auto_merge: false });
+    assert.ok((await Audit.storage.query({ action: 'mr.merge', phase: 'prepared' })).total > 0);
+    putCount++;
+    return { config, status: mergeStatus, statusText: '', headers: {}, data: JSON.stringify(mergeResponse) };
+  };
+  await api.getReviewDetails(2, 1, true);
+  assert.equal(recheckSeen, true);
+  await api.mergeReview(2, 1, head, 7);
+  for (const code of [401, 403, 405, 409, 422, 500]) {
+    mergeStatus = code;
+    await assert.rejects(api.mergeReview(2, 1, head, 7), new RegExp(String(code)));
+  }
+  mergeStatus = 200;
+  for (const invalid of [null, { ...ready, state: 'opened' }, { ...ready, state: 'merged', sha: updated },
+    { ...ready, state: 'merged', iid: 2 }, { ...ready, state: 'merged', project_id: 99 }]) {
+    mergeResponse = invalid;
+    await assert.rejects(api.mergeReview(2, 1, head, 7), /结果未知.*未确认/);
+  }
+  assert.equal(putCount, 12);
+  assert.ok((await Audit.storage.query({ action: 'mr.merge', phase: 'success' })).total > 0);
   warningDialog.value = undefined;
   console.log('[PASS] MR review: immutable diff versions, fork files, add/delete/rename, binary errors, SHA-bound approval, cancellation, stale contexts and truncation');
+  console.log('[PASS] MR merge: metadata, loaded complete review, confirmation/cancellation, fresh readiness/permissions/reviewer/SHA/direction checks, concurrent writes, stale contexts, immutable PUT SHA, audit preparation, no auto-merge and uncertain results');
 }
 
 runTests().catch(error => {

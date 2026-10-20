@@ -109,7 +109,7 @@ async function runTests(): Promise<void> {
     let networkError = false;
     let inspectPrepared: (() => Promise<void>) | undefined;
     axios.defaults.adapter = async config => {
-      const mutation = config.method === 'post' || config.method === 'delete';
+      const mutation = config.method === 'post' || config.method === 'delete' || config.method === 'put';
       if (mutation) {
         await inspectPrepared?.();
         remoteWrites++;
@@ -128,6 +128,7 @@ async function runTests(): Promise<void> {
     const effects = [
       () => service.deleteBranch(1, 'feature/test', 'branch-sha', 'main-sha'),
       () => service.approveReview(1, 9, 'a'.repeat(40), 7),
+      () => service.mergeReview(1, 9, 'a'.repeat(40), 7),
       () => service.createMergeRequest(payload)
     ];
     for (const [index, effect] of effects.entries()) {
@@ -141,6 +142,16 @@ async function runTests(): Promise<void> {
       const saved = new AuditStore(`${failing.directory}.saved`);
       assert.equal((await saved.query({ phase: 'prepared' })).total, 0);
     }
+    const mergePost = new FaultingStore(path.join(root, 'merge-post-success'));
+    mergePost.failOn = 'success';
+    Audit.configure(mergePost);
+    response = { project_id: 1, iid: 9, state: 'merged', sha: 'a'.repeat(40) };
+    const beforeMergeSuccess = remoteWrites;
+    await assert.rejects(service.mergeReview(1, 9, 'a'.repeat(40), 7), error =>
+      error instanceof AuditWriteError && error.remoteSucceeded);
+    assert.equal(remoteWrites, beforeMergeSuccess + 1);
+    await assert.rejects(service.mergeReview(1, 9, 'a'.repeat(40), 7), AuditWriteError);
+    assert.equal(remoteWrites, beforeMergeSuccess + 1);
     const post = new FaultingStore(path.join(root, 'post-success'));
     post.failOn = 'success';
     Audit.configure(post);

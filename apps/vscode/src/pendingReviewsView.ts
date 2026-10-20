@@ -120,8 +120,8 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
         return child;
       });
       if (!snapshot.complete) {
-        files.unshift(this.message('变更列表被 GitLab 截断，无法在此批准，请在浏览器查看完整变更'));
-        vscode.window.showWarningMessage('MR 变更列表不完整，Approve 已阻止，请在 GitLab 中完成审阅。');
+        files.unshift(this.message('变更列表被 GitLab 截断，无法在此批准或合并，请在浏览器查看完整变更'));
+        vscode.window.showWarningMessage('MR 变更列表不完整，Approve 和 Merge 已阻止，请在 GitLab 中完成审阅。');
       }
       this.files.set(item, files.length ? files : [this.message('此版本没有文件变更')]);
     } catch (error) {
@@ -148,6 +148,11 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   async approve(item: PendingReviewItem): Promise<boolean> {
     const { request, service, userId } = this.requireRequest(item);
     return this.review.approve(request, service, userId);
+  }
+
+  async merge(item: PendingReviewItem): Promise<boolean> {
+    const { request, service, userId } = this.requireRequest(item);
+    return this.review.merge(request, service, userId);
   }
 
   private message(label: string, retry = false): PendingReviewItem {
@@ -216,8 +221,13 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
               vscode.TreeItemCollapsibleState.Collapsed, project, request);
             item.id = `pending-review:${project.id}:${request.iid}`;
             item.contextValue = 'pendingReviewRequest';
-            item.description = [request.author?.name, request.draft ? '草稿' : undefined].filter(Boolean).join(' · ');
-            item.tooltip = `${request.title}\n${project.path_with_namespace} !${request.iid}\n${request.source_branch} → ${request.target_branch}\n作者: ${request.author?.name ?? '未知'}\n指定我为 Reviewer，尚未批准`;
+            const author = request.author?.name || request.author?.username || '未知';
+            const username = request.author?.username ? ` (@${request.author.username})` : '';
+            item.description = [
+              `${request.source_branch} → ${request.target_branch}`, `提交人: ${author}${username}`,
+              request.draft ? '草稿' : undefined
+            ].filter(Boolean).join(' · ');
+            item.tooltip = `${request.title}\n${project.path_with_namespace}\nMR: !${request.iid} · ID: ${request.id}\n${request.source_branch} → ${request.target_branch}\nSource: ${request.source_branch}\nTarget: ${request.target_branch}\n提交人: ${author}${username}\n指定我为 Reviewer，尚未批准`;
             item.iconPath = new vscode.ThemeIcon('git-pull-request');
             item.command = { command: 'gitlabMr.showPendingReviewChanges', title: '查看 MR 变更文件', arguments: [item] };
             group.items.push(item);
