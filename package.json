@@ -3,23 +3,20 @@
   "version": "0.0.0",
   "private": true,
   "description": "GitLab workbench monorepo: VS Code extension, web app, API and shared domain logic",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build:core": "npm run build --workspace=@gitlab-workbench/core",
-    "build": "npm run build:core && npm run build --workspace=gitlab-auto-merge-request && npm run build --workspace=@gitlab-workbench/api && npm run build --workspace=@gitlab-workbench/web",
-    "compile": "npm run build:core && npm run compile --workspaces --if-present",
-    "test": "npm run build:core && npm run test --workspaces --if-present",
-    "dev": "npm run build:core && node scripts/dev.mjs",
-    "dev:web": "npm run dev --workspace=@gitlab-workbench/web",
-    "dev:api": "npm run dev --workspace=@gitlab-workbench/api",
-    "build:extension": "npm run build:core && npm run build --workspace=gitlab-auto-merge-request",
-    "package:vsix": "npm run build:core && npm run package:vsix --workspace=gitlab-auto-merge-request"
+    "build:core": "pnpm --filter @gitlab-workbench/core build",
+    "build": "pnpm -r build",
+    "compile": "pnpm run build:core && pnpm -r compile",
+    "test": "pnpm run build:core && pnpm -r test",
+    "dev": "pnpm run build:core && node scripts/dev.mjs",
+    "dev:web": "pnpm run build:core && pnpm --filter @gitlab-workbench/web dev",
+    "dev:api": "pnpm run build:core && pnpm --filter @gitlab-workbench/api dev",
+    "build:extension": "pnpm run build:core && pnpm --filter gitlab-auto-merge-request build",
+    "package:vsix": "pnpm run build:core && pnpm --filter gitlab-auto-merge-request package:vsix"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

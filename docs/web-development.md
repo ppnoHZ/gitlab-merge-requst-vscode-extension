@@ -30,7 +30,7 @@ cp apps/api/.env.example apps/api/.env
 | `GITLAB_REDIRECT_URI` | 完整回调地址，固定路径 `/api/auth/callback` |
 | `WEB_ORIGIN` | 用户访问前端的协议、域名和端口，不含路径 |
 
-五项必须一起配置，全部留空时服务可正常启动并报告未配置；部分填写则启动时报错。API 会从其工作目录的 `.env` 加载值；通过根目录 npm workspace 命令启动时，该目录为 `apps/api`。也可直接注入进程环境变量。
+五项必须一起配置，全部留空时服务可正常启动并报告未配置；部分填写则启动时报错。API 会从其工作目录的 `.env` 加载值；通过根目录 pnpm workspace 命令启动时，该目录为 `apps/api`。也可直接注入进程环境变量。
 
 在公司 GitLab 创建 OAuth 应用，将上述回调地址原样登记，申请 `read_user read_api read_repository`。用户授权不会改变原有项目权限。
 
@@ -38,7 +38,7 @@ cp apps/api/.env.example apps/api/.env
 
 若公司使用内部 CA，应在 Node 启动前通过系统信任库或导出的 `NODE_EXTRA_CA_CERTS` 配置信任；不要只在运行后加载的 `.env` 中设置该 Node 启动参数。Git 使用独立信任库，可配置 `http.sslCAInfo` 或 `GIT_SSL_CAINFO`。浏览器、API 和 Git 均需能访问公司 GitLab。
 
-配置后重新启动 `npm run dev`，在页面点击「使用 GitLab 登录」，授权后选择真实项目。首次检查可能需要拉取仓库；分支和 MR 数据按完整分页读取。
+配置后重新启动 `pnpm run dev`，在页面点击「使用 GitLab 登录」，授权后选择真实项目。首次检查可能需要拉取仓库；分支和 MR 数据按完整分页读取。
 
 ## HTTP 接口
 
@@ -56,6 +56,6 @@ cp apps/api/.env.example apps/api/.env
 
 ## 验证与边界
 
-根目录执行 `npm run compile`、`npm test`、`npm run build`。API 测试使用真实本地 HTTP 模拟 GitLab，覆盖授权/PKCE/state、Token 刷新、权限、分页和会话退出；Git 测试通过带鉴权的 HTTP Git 服务验证正常合并、squash/rebase、冲突、未合并及远程新增提交。Web 测试覆盖请求失败、未配置页面、链接协议及筛选。
+根目录执行 `pnpm run compile`、`pnpm test`、`pnpm run build`。API 测试使用真实本地 HTTP 模拟 GitLab，覆盖授权/PKCE/state、Token 刷新、权限、分页和会话退出；Git 测试通过带鉴权的 HTTP Git 服务验证正常合并、squash/rebase、冲突、未合并及远程新增提交。Web 测试覆盖请求失败、未配置页面、链接协议及筛选。
 
-这些测试不是公司 GitLab 实例联调。目前公司配置按要求留空，实际 OAuth 回调、证书与访问权限需填好配置后验证。CI、审批和部署状态不在上线判断范围内。共享核心修改后需重新 `npm run build:core`；现有开发启动器仅监视 Web 和 API。
+这些测试不是公司 GitLab 实例联调。目前公司配置按要求留空，实际 OAuth 回调、证书与访问权限需填好配置后验证。CI、审批和部署状态不在上线判断范围内。共享核心修改后需重新 `pnpm run build:core`；现有开发启动器仅监视 Web 和 API。

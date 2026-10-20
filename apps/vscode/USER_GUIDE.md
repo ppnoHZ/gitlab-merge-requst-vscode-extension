@@ -11,7 +11,7 @@
 在仓库根目录安装项目依赖后执行：
 
 ```bash
-npm run package:vsix
+pnpm run package:vsix
 ```
 
 该命令依次运行测试、类型检查，再通过固定版本的 VSCE 生成本地 VSIX。任何步骤失败都会停止；打包时自动执行现有 `vscode:prepublish` 压缩构建。首次使用需要联网下载 VSCE，需 Node.js 22 或更新版本。
@@ -20,7 +20,7 @@ npm run package:vsix
 
 安装包按当前 `package.json` 的名称和版本自动命名，例如 `gitlab-auto-mr-0.1.1.vsix`，生成在仓库根目录；更新版本号后无需修改脚本。只包含扩展运行文件、图标和使用文档，不包含源码、测试文件、source map 或本地配置；运行依赖已打入 bundle，因此不额外收集 `node_modules`。
 
-在 VS Code 扩展面板点击 `…` → **从 VSIX 安装…**，选择安装包并重新加载窗口。此命令不会上传 Marketplace，也不会提交代码或创建 Git 标签。现有 `npm run package` 仍仅执行压缩构建，不生成 VSIX。
+在 VS Code 扩展面板点击 `…` → **从 VSIX 安装…**，选择安装包并重新加载窗口。此命令不会上传 Marketplace，也不会提交代码或创建 Git 标签。扩展目录中的 `pnpm run package` 仍仅执行压缩构建，不生成 VSIX。
 
 ### 运行环境
 

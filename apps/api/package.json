@@ -10,6 +10,6 @@
     "compile": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts"
   },
-  "dependencies": { "@gitlab-workbench/core": "0.0.0" },
+  "dependencies": {   "@gitlab-workbench/core": "workspace:*" },
   "devDependencies": { "tsx": "^4.20.0" }
 }

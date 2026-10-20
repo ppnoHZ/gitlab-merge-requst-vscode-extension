@@ -1,9 +1,13 @@
 import { spawn } from 'node:child_process';
 
-const children = [
-  spawn('npm', ['run', 'dev:api'], { stdio: 'inherit', detached: process.platform !== 'win32' }),
-  spawn('npm', ['run', 'dev:web'], { stdio: 'inherit', detached: process.platform !== 'win32' })
-];
+const pnpm = process.env.npm_execpath;
+if (!pnpm) throw new Error('Start development servers with pnpm run dev.');
+const children = ['@gitlab-workbench/api', '@gitlab-workbench/web'].map(name =>
+  spawn(process.execPath, [pnpm, '--filter', name, 'dev'], {
+    stdio: 'inherit',
+    detached: process.platform !== 'win32'
+  })
+);
 let stopping = false;
 function stop(code) {
   if (stopping) return;
