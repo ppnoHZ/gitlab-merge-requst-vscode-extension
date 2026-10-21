@@ -1,3 +1,4 @@
+import { handleCreateRemoteBranch } from './branchCreation';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { GitService, MainMergeResult } from './gitService';
@@ -6,7 +7,7 @@ import { TemplateEngine } from './templateEngine';
 import { TokenManager } from './tokenManager';
 import { Logger } from './logger';
 import { getReleaseFeatureStatuses, getReleaseVersion } from './releaseReadiness';
-import { commonBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
+import { commonBranchFilters, upgradeDefaultBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
 import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { PendingReviewItem, PendingReviewsProvider } from './pendingReviewsView';
 import { Audit, AuditStore } from './audit';
@@ -249,9 +250,14 @@ export async function activate(context: vscode.ExtensionContext) {
     void refreshPendingReviews(false);
   }
   const branchFilterStateKey = 'gitlabMr.releaseBranchFilters';
-  const releaseProvider = new ReleaseReadinessProvider(
-    context.workspaceState.get<string[] | null>(branchFilterStateKey, commonBranchFilters)
-  );
+  let savedBranchFilters = context.workspaceState.get<string[] | null>(branchFilterStateKey, commonBranchFilters);
+  const defaultsVersionKey = 'gitlabMr.branchFilterDefaultsVersion';
+  if (context.workspaceState.get<number>(defaultsVersionKey, 0) < 1) {
+    savedBranchFilters = upgradeDefaultBranchFilters(savedBranchFilters);
+    await context.workspaceState.update(branchFilterStateKey, savedBranchFilters);
+    await context.workspaceState.update(defaultsVersionKey, 1);
+  }
+  const releaseProvider = new ReleaseReadinessProvider(savedBranchFilters);
   const releaseTreeView = vscode.window.createTreeView('gitlabMr.releaseReadiness', {
     treeDataProvider: releaseProvider,
     showCollapseAll: true
@@ -276,6 +282,21 @@ export async function activate(context: vscode.ExtensionContext) {
       releaseTreeView.title = releaseProvider.hasDisplayFilters ? `分支管理 · ${releaseProvider.filterTooltip}` : '分支管理';
     })
   );
+  for (const kind of [undefined, 'release', 'hotfix', 'conflict'] as const) {
+    const name = kind ? `gitlabMr.create${kind[0].toUpperCase()}${kind.slice(1)}Branch` : 'gitlabMr.createRemoteBranch';
+    context.subscriptions.push(registerCommand(name, async (item?: ReleaseReadinessTreeItem) => {
+      if (await handleCreateRemoteBranch(tokenManager, kind, item?.branchPath)) {
+        try {
+          await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false, refreshBranches: true });
+        } catch (error) {
+          Logger.warn('远程分支已创建，但刷新分支列表失败', error);
+          vscode.window.showWarningMessage('远程分支已创建，但列表刷新失败，请手动刷新，不要重复创建。');
+        }
+        overview.invalidate();
+        if (overviewTree.visible) void refreshOverview();
+      }
+    }));
+  }
   const filterBranchesByKeywordCmd = registerCommand('gitlabMr.filterBranchesByKeyword', async () => {
     try {
       await handleFilterBranchesByKeyword(releaseProvider, async () => {

@@ -15,3 +15,17 @@ export function branchName(draft: Pick<BranchDraft, 'kind' | 'version' | 'issue'
   if (description && !/^[a-z0-9][a-z0-9-]{0,79}$/.test(description)) throw new Error('描述请使用小写字母、数字和横线');
   return `hotfix/${version}/${issue}${description ? '-' + description : ''}`;
 }
+
+export type DevelopmentBranchKind = BranchKind | 'conflict';
+export function conflictBranchName(source: string): string {
+  const name = source.trim();
+  const segments = name.split('/');
+  if (!['release', 'hotfix'].includes(segments[0]) || segments.length < (segments[0] === 'hotfix' ? 3 : 2) || name.length > 240 || segments.some(part => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part) || part.includes('..') || part.endsWith('.') || part.endsWith('.lock'))) {
+    throw new Error('原始分支需为 release/<编号> 或 hotfix/<编号>/<工单号>，不能包含空层级或非法字符');
+  }
+  return `conflict/${name}`;
+}
+export function developmentBranchName(draft: Omit<BranchDraft, 'kind'> & { kind: DevelopmentBranchKind; conflictSource?: string }): string {
+  if (draft.kind !== 'conflict') return branchName({ ...draft, kind: draft.kind });
+  return conflictBranchName(draft.conflictSource ?? '');
+}

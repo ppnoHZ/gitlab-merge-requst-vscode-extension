@@ -1,6 +1,6 @@
 import assert from 'assert';
 import * as vscode from 'vscode';
-import { commonBranchFilters, formatUpdateDuration, ReleaseReadinessProvider } from '../src/releaseReadinessView';
+import { commonBranchFilters, upgradeDefaultBranchFilters, formatUpdateDuration, ReleaseReadinessProvider } from '../src/releaseReadinessView';
 import { existsSync, readFileSync } from 'fs';
 
 function branchRoots(provider: ReleaseReadinessProvider) {
@@ -461,3 +461,26 @@ for (const state of ['open', 'merged', 'closed', 'not-created']) {
   assert.match(featureContext, /releaseFeature-(not-created|closed)|releaseFeature-(open|merged|closed)/);
 }
 console.log('[PASS] branch filters: defaults, multi-select, exact/prefix matching, restore all, empty results, saved state, MR and green markers');
+
+// conflict branches are included by default, including the legacy saved default set.
+const conflictBranches = ['conflict/hotfix/H20260706/FOC-0009', 'conflict/release/LI2500076'];
+for (const saved of [commonBranchFilters, commonBranchFilters.filter(value => value !== 'conflict/')]) {
+  const view = new ReleaseReadinessProvider(upgradeDefaultBranchFilters(saved));
+  view.setBranches([...conflictBranches, 'main']);
+  assert(conflictBranches.every(branch => view.getVisibleBranches().includes(branch)));
+  assert(view.getChildren().some(item => item.label === 'conflict'));
+  const directory = view.getChildren().find(item => item.label === 'conflict')!;
+  assert.deepEqual(view.getChildren(directory).map(item => item.label).sort(), ['hotfix', 'release']);
+  view.dispose();
+}
+assert.deepEqual(upgradeDefaultBranchFilters(['release/']), ['release/']);
+assert.equal(upgradeDefaultBranchFilters(null), null);
+const customConflictFilter = new ReleaseReadinessProvider(['release/']);
+customConflictFilter.setBranches(conflictBranches);
+assert.equal(customConflictFilter.getVisibleBranches().length, 0, 'explicit custom filters must be preserved');
+customConflictFilter.dispose();
+const allConflictBranches = new ReleaseReadinessProvider(null);
+allConflictBranches.setBranches(conflictBranches);
+assert.equal(allConflictBranches.getVisibleBranches().length, 2);
+allConflictBranches.dispose();
+console.log('[PASS] conflict defaults: nested paths, legacy migration, custom filters and show-all');

@@ -1,3 +1,4 @@
+import type { BranchReference, BaseKind } from '@gitlab-workbench/core';
 import axios from 'axios';
 import * as https from 'https';
 import { URL } from 'url';
@@ -11,6 +12,7 @@ interface GitLabProject {
   name: string;
   web_url: string;
   path_with_namespace?: string;
+  default_branch?: string;
 }
 
 interface GitLabBranch {
@@ -41,8 +43,8 @@ export class GitLabService {
    * 通用 HTTP 请求方法，内置处理私有部署/证书容错
    */
   private request(path: string, options: { method: 'DELETE' }): Promise<void>;
-  private request<T>(path: string, options?: { method?: string; body?: any }): Promise<T>;
-  private async request<T>(path: string, options: { method?: string; body?: any } = {}): Promise<T | void> {
+  private request<T>(path: string, options?: { method?: string; body?: any; timeout?: number }): Promise<T>;
+  private async request<T>(path: string, options: { method?: string; body?: any; timeout?: number } = {}): Promise<T | void> {
     const fullUrl = `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
     const urlObj = new URL(fullUrl);
     const isHttps = urlObj.protocol === 'https:';
@@ -58,6 +60,7 @@ export class GitLabService {
       response = await axios.request<string>({
         url: fullUrl,
         method,
+        timeout: options.timeout,
         data: options.body,
         headers: {
           'PRIVATE-TOKEN': this.token,
@@ -262,7 +265,7 @@ export class GitLabService {
   /**
    * 根据项目路径查询项目详情（包括项目 ID）
    */
-  async getProject(projectPath: string): Promise<{ id: number; name: string; web_url: string }> {
+  async getProject(projectPath: string): Promise<{ id: number; name: string; web_url: string; default_branch?: string }> {
     const encoded = encodeURIComponent(projectPath);
     let directResponse: unknown;
     let directLookupError: Error | undefined;
@@ -316,6 +319,54 @@ export class GitLabService {
         return results;
       }
     }
+  }
+
+  async getBranchCreationRefs(projectId: number, kind: BaseKind, page = 1, search = ''): Promise<{ items: BranchReference[]; hasMore: boolean }> {
+    const query = new URLSearchParams({ per_page: '100', page: String(page), search });
+    const data = await this.request<unknown[]>(`/projects/${projectId}/repository/${kind === 'tag' ? 'tags' : 'branches'}?${query}`, { timeout: 20000 });
+    if (!Array.isArray(data)) throw new Error('GitLab 基线列表无效');
+    return { items: data.map(parseCreationRef), hasMore: data.length === 100 };
+  }
+
+  async getBranchCreationRef(projectId: number, kind: BaseKind, name: string): Promise<BranchReference> {
+    const data = await this.request<unknown>(`/projects/${projectId}/repository/${kind === 'tag' ? 'tags' : 'branches'}/${encodeURIComponent(name)}`, { timeout: 20000 });
+    const ref = parseCreationRef(data);
+    if (ref.name !== name) throw new Error('GitLab 基线名称不匹配');
+    return ref;
+  }
+
+  private static readonly creatingBranches = new Set<string>();
+  async createRemoteBranch(projectId: number, name: string, kind: BaseKind, base: string, expectedSha: string): Promise<{ ref: BranchReference; recovered: boolean }> {
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !/^(release|hotfix|conflict)\/[A-Za-z0-9._/-]+$/.test(name) || name.includes('..') || name.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) || !['branch', 'tag'].includes(kind) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expectedSha)) throw new Error('分支创建参数无效');
+    const key = `${this.baseUrl}:${projectId}:${name}`;
+    if (GitLabService.creatingBranches.has(key)) throw new Error('此分支正在创建，请等待结果，不要重复提交');
+    GitLabService.creatingBranches.add(key);
+    try {
+      return await Audit.sensitive('branch.create', 'high', { ...this.auditContext, project: projectId, branch: name, sourceBranch: base, baseSha: expectedSha }, async () => {
+        const current = await this.getBranchCreationRef(projectId, kind, base);
+        if (current.sha !== expectedSha) throw new Error('基线提交已变化，请重新预览确认');
+        try { await this.getBranchCreationRef(projectId, 'branch', name); }
+        catch (error) {
+          if (!(error instanceof AuditApiError && error.status === 404)) throw error;
+          try {
+            const ref = parseCreationRef(await this.request(`/projects/${projectId}/repository/branches`, { method: 'POST', body: { branch: name, ref: expectedSha }, timeout: 20000 }));
+            if (ref.name !== name || ref.sha !== expectedSha) throw new AuditApiError('创建响应不匹配，结果尚未确认');
+            return { ref, recovered: false };
+          } catch (creationError) {
+            if (!(creationError instanceof AuditApiError) || (creationError.status && creationError.status < 500 && creationError.status !== 408)) throw creationError;
+            try {
+              const ref = await this.getBranchCreationRef(projectId, 'branch', name);
+              if (ref.sha === expectedSha) {
+                await Audit.event('branch.create.reconciled', { ...this.auditContext, project: projectId, branch: name, baseSha: expectedSha });
+                return { ref, recovered: true };
+              }
+            } catch { /* Unconfirmed: never retry the POST. */ }
+            throw new AuditApiError('创建结果尚未确认，请在 GitLab 查询同名分支后再操作，不要重复提交');
+          }
+        }
+        throw new Error('同名分支已存在，请更换名称');
+      });
+    } finally { GitLabService.creatingBranches.delete(key); }
   }
 
   async getProjectBranches(projectId: string | number, page = 1, search = ''): Promise<GitLabBranchPage> {
@@ -489,4 +540,10 @@ export class GitLabService {
     });
     return mr;
   }
+}
+
+function parseCreationRef(data: unknown): BranchReference {
+  const value = data as { name?: unknown; commit?: { id?: unknown; title?: unknown; committed_date?: unknown } };
+  if (typeof value?.name !== 'string' || typeof value.commit?.id !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value.commit.id)) throw new AuditApiError('GitLab 分支提交信息无效');
+  return { name: value.name, sha: value.commit.id, title: typeof value.commit.title === 'string' ? value.commit.title : '', committedDate: typeof value.commit.committed_date === 'string' ? value.commit.committed_date : undefined };
 }

@@ -43,8 +43,15 @@ const stateInfo: Record<ReleaseFeatureState, { label: string; icon: string }> = 
 };
 
 export const commonBranchFilters = [
-  'feature/', 'release/', 'dev', 'uat', 'main', 'bugfix/', 'hotfix/', 'tst', 'pre'
+  'feature/', 'release/', 'dev', 'uat', 'main', 'bugfix/', 'hotfix/', 'conflict/', 'tst', 'pre'
 ];
+
+/** Upgrade only the previously saved default set; preserve explicit custom filters and show-all. */
+export function upgradeDefaultBranchFilters(filters: string[] | null): string[] | null {
+  const legacy = commonBranchFilters.filter(value => value !== 'conflict/');
+  return filters && filters.length === legacy.length && legacy.every(value => filters.includes(value))
+    ? [...commonBranchFilters] : filters;
+}
 
 export function formatUpdateDuration(committedDate: string, now = Date.now()): string {
   const timestamp = Date.parse(committedDate);
