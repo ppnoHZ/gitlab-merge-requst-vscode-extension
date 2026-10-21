@@ -71,3 +71,7 @@ VSIX 发布前只执行扩展的 `test:publish` 本地逻辑测试和类型检�
 - VS Code 的 TreeView、QuickPick、SecretStorage 留在扩展中；OAuth、GitLab 凭据、Git 命令和检查任务留在后端。
 - 各 workspace 的测试在其自己的工作目录运行，扩展原有 manifest 和资源路径保持相对独立。
 - 不提交 `.env`、Token、仓库缓存、构建产物或 `node_modules`。
+
+### 新建发布分支
+
+Web 已支持新建 release 和 hotfix，包含分支/Tag 基线选择、SHA 预览确认、重名/基线变化校验、超时结果核对与创建审计。默认只读；启用方式见 [Web 开发说明](docs/web-development.md#新建-release--hotfix)。公司 OAuth 字段仍预留为空，未进行真实公司实例创建操作。

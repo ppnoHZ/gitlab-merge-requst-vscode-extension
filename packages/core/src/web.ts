@@ -5,6 +5,7 @@ export interface WebStatus {
   status: 'ok';
   gitlab: { connected: boolean; configured: boolean; instance?: string; user?: WebGitLabUser };
   csrfToken?: string;
+  branchCreationEnabled?: boolean;
 }
 export interface WebProjectPage { items: WebProject[]; hasMore: boolean }
 

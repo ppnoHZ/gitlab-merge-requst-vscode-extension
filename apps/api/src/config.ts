@@ -5,6 +5,7 @@ export interface GitLabConfig {
   redirectUri: string;
   webOrigin: string;
   secureCookies: boolean;
+  allowBranchCreation?: boolean;
 }
 
 export function readGitLabConfig(env: NodeJS.ProcessEnv = process.env): GitLabConfig | undefined {
@@ -18,7 +19,7 @@ export function readGitLabConfig(env: NodeJS.ProcessEnv = process.env): GitLabCo
   if (redirect.origin !== origin.origin || redirect.pathname !== '/api/auth/callback') throw new Error('OAuth callback must be WEB_ORIGIN/api/auth/callback');
   return {
     url: instance.href.replace(/\/+$/, ''), clientId: env.GITLAB_CLIENT_ID!.trim(), clientSecret: env.GITLAB_CLIENT_SECRET!.trim(),
-    redirectUri: redirect.href, webOrigin: origin.origin, secureCookies: origin.protocol === 'https:'
+    redirectUri: redirect.href, webOrigin: origin.origin, secureCookies: origin.protocol === 'https:', allowBranchCreation: env.GITLAB_ALLOW_BRANCH_CREATION === 'true'
   };
 }
 function checkedUrl(value: string): URL {

@@ -4,15 +4,18 @@ import type { GitLabConfig } from './config';
 import { OAuthSessions, type Session } from './auth';
 import { ApiError, WebGitLabClient } from './gitlab';
 import { RepositoryChecks } from './repository';
+import { BranchCreation, type BranchAudit } from './branchCreation';
 
 export interface AppOptions {
   config?: GitLabConfig;
+  branchAudit?: BranchAudit;
   checkRepository?: (session: string, project: number, remote: string, token: string, branches: string[]) => Promise<MainMergeResult>;
 }
 export function createApp(options: AppOptions = {}) {
   const { config } = options;
   const repositories = config ? new RepositoryChecks(config.url) : undefined;
   const auth = config ? new OAuthSessions(config, session => repositories?.removeSession(session)) : undefined;
+  const branchCreation = new BranchCreation(options.branchAudit);
   const checks = new Map<string, Promise<ReleaseOverviewSnapshot>>();
   const app = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -49,7 +52,7 @@ export function createApp(options: AppOptions = {}) {
       const session = await auth?.get(request, response);
       const status: WebStatus = { status: 'ok', gitlab: { configured: !!config, connected: !!session,
         ...(config ? { instance: config.url } : {}), ...(session ? { user: session.user } : {}) },
-        ...(session ? { csrfToken: session.csrf } : {}) };
+        branchCreationEnabled: config?.allowBranchCreation === true, ...(session ? { csrfToken: session.csrf } : {}) };
       return json(response, status);
     }
     if (request.method === 'POST' && path === '/api/auth/logout') {
@@ -65,6 +68,44 @@ export function createApp(options: AppOptions = {}) {
       const search = (url.searchParams.get('search') ?? '').trim();
       if (search.length > 200) throw new ApiError(400, '项目搜索词过长');
       return json(response, await new WebGitLabClient(config!.url, session.token).projects(page, search));
+    }
+    const refs = path.match(/^\/api\/projects\/([1-9]\d*)\/refs$/);
+    if (request.method === 'GET' && refs) {
+      const session = await requireSession(request, response);
+      const id = Number(refs[1]);
+      const kind = url.searchParams.get('kind') ?? 'branch';
+      const page = Number(url.searchParams.get('page') ?? 1);
+      const search = url.searchParams.get('search') ?? '';
+      if (!Number.isSafeInteger(id) || !['branch', 'tag'].includes(kind) || !Number.isInteger(page) || page < 1 || page > 500 || search.length > 200) throw new ApiError(400, '基线查询参数无效');
+      const client = new WebGitLabClient(config!.url, session.token);
+      const project = await client.project(id);
+      const result = await client.references(id, kind as 'branch' | 'tag', page, search);
+      if (kind === 'branch' && page === 1 && !search && project.default_branch && !result.items.some(item => item.name === project.default_branch)) {
+        result.items.unshift(await client.reference(id, 'branch', project.default_branch));
+      }
+      return json(response, { ...result, defaultBranch: project.default_branch });
+    }
+    const create = path.match(/^\/api\/projects\/([1-9]\d*)\/branches(\/preview)?$/);
+    if (request.method === 'POST' && create) {
+      const session = await requireSession(request, response);
+      if (!config?.allowBranchCreation) throw new ApiError(403, '分支创建未启用，请管理员配置写权限后重新登录');
+      if (request.headers.origin !== config.webOrigin || request.headers['x-csrf-token'] !== session.csrf) throw new ApiError(403, '请求校验失败，请刷新后重试');
+      const id = Number(create[1]);
+      if (!Number.isSafeInteger(id)) throw new ApiError(400, '项目编号无效');
+      if (!request.headers['content-type']?.startsWith('application/json')) throw new ApiError(415, '请使用 JSON 请求');
+      const chunks: Buffer[] = []; let size = 0;
+      for await (const chunk of request) {
+        size += Buffer.byteLength(chunk);
+        if (size > 16384) throw new ApiError(413, '请求体过大');
+        chunks.push(Buffer.from(chunk));
+      }
+      let body: unknown;
+      try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new ApiError(400, 'JSON 请求无效'); }
+      const client = new WebGitLabClient(config.url, session.token);
+      if (create[2]) return json(response, await branchCreation.preview(session, client, id, body));
+      const ticket = (body as { ticket?: unknown })?.ticket;
+      if (typeof ticket !== 'string' || ticket.length > 100) throw new ApiError(400, '确认标识无效');
+      return json(response, await branchCreation.create(session, client, id, ticket));
     }
     const overview = path.match(/^\/api\/projects\/([1-9]\d*)\/overview$/);
     if (request.method === 'GET' && overview) {

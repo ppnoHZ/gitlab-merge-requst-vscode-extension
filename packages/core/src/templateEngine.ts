@@ -337,11 +337,8 @@ export class TemplateEngine {
       lines.push(`## 📁 变动文件 (${changedFiles.length} 个文件)`);
       lines.push('<details><summary>点击展开变动文件列表</summary>');
       lines.push('');
-      for (const file of changedFiles.slice(0, 50)) {
+      for (const file of changedFiles) {
         lines.push(`- \`${file}\``);
-      }
-      if (changedFiles.length > 50) {
-        lines.push(`- *...以及其余 ${changedFiles.length - 50} 个文件*`);
       }
       lines.push('</details>');
       lines.push('');

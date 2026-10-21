@@ -1,4 +1,4 @@
-import type { GitLabBranchPage, GitLabPage, ReleaseMergeRequest, WebGitLabUser, WebProject, WebProjectPage } from '@gitlab-workbench/core';
+import type { GitLabBranchPage, GitLabPage, ReleaseMergeRequest, WebGitLabUser, WebProject, WebProjectPage, BranchReference, BaseKind } from '@gitlab-workbench/core';
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -6,15 +6,17 @@ export class ApiError extends Error {
 export interface OAuthTokens { access_token: string; refresh_token?: string; expires_in?: number }
 export class WebGitLabClient {
   constructor(readonly baseUrl: string, private readonly token: string) {}
-  private async request(path: string): Promise<{ data: unknown; headers: Headers }> {
+  private async request(path: string, body?: Record<string, string>): Promise<{ data: unknown; headers: Headers }> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/api/v4${path}`, {
-        headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
+        method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined,
+        headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
         redirect: 'error', signal: AbortSignal.timeout(20000)
       });
     } catch { throw new ApiError(502, '无法连接 GitLab，请检查网络、实例地址和证书信任配置'); }
     if (!response.ok) {
+      if (response.status === 400 || response.status === 409) throw new ApiError(body ? 409 : 400, body ? 'GitLab 拒绝创建：请检查同名分支、分支名称或保护规则' : 'GitLab 请求参数无效');
       if (response.status === 401) throw new ApiError(401, 'GitLab 授权已失效，请重新登录');
       if (response.status === 403) throw new ApiError(403, '当前 GitLab 账号没有此操作权限');
       if (response.status === 404) throw new ApiError(404, 'GitLab 项目或分支不存在，或当前账号无权访问');
@@ -23,6 +25,24 @@ export class WebGitLabClient {
     }
     try { return { data: await response.json(), headers: response.headers }; }
     catch { throw new ApiError(502, 'GitLab 返回了无效的数据'); }
+  }
+  async references(id: number, kind: BaseKind, page: number, search: string) {
+    const query = new URLSearchParams({ per_page: '50', page: String(page), search });
+    const { data, headers } = await this.request(`/projects/${id}/repository/${kind === 'tag' ? 'tags' : 'branches'}?${query}`);
+    if (!Array.isArray(data)) throw new ApiError(502, 'GitLab 基线列表无效');
+    return { items: data.map(reference), hasMore: hasMore(headers, page, data.length, 50) };
+  }
+  async reference(id: number, kind: BaseKind, name: string): Promise<BranchReference> {
+    const { data } = await this.request(`/projects/${id}/repository/${kind === 'tag' ? 'tags' : 'branches'}/${encodeURIComponent(name)}`);
+    const result = reference(data);
+    if (result.name !== name) throw new ApiError(502, 'GitLab 基线名称不匹配');
+    return result;
+  }
+  async createBranch(id: number, name: string, sha: string): Promise<BranchReference> {
+    const { data } = await this.request(`/projects/${id}/repository/branches`, { branch: name, ref: sha });
+    const result = reference(data);
+    if (result.name !== name || result.sha !== sha) throw new ApiError(502, '创建响应与确认信息不一致，请查询远程分支');
+    return result;
   }
   async user(): Promise<WebGitLabUser> {
     const { data } = await this.request('/user');
@@ -36,12 +56,12 @@ export class WebGitLabClient {
     if (!Array.isArray(data)) throw new ApiError(502, 'GitLab 项目列表无效');
     return { items: data.map(project), hasMore: hasMore(headers, page, data.length, 50) };
   }
-  async project(id: number): Promise<WebProject & { http_url_to_repo: string }> {
+  async project(id: number): Promise<WebProject & { http_url_to_repo: string; default_branch?: string }> {
     const { data } = await this.request(`/projects/${id}`);
     const result = project(data);
     const url = (data as { http_url_to_repo?: unknown }).http_url_to_repo;
     if (typeof url !== 'string') throw new ApiError(502, 'GitLab 仓库地址无效');
-    return { ...result, http_url_to_repo: url };
+    return { ...result, http_url_to_repo: url, default_branch: typeof (data as { default_branch?: unknown }).default_branch === 'string' ? (data as { default_branch: string }).default_branch : undefined };
   }
   async branches(id: number, page: number): Promise<GitLabBranchPage> {
     const { data, headers } = await this.request(`/projects/${id}/repository/branches?per_page=100&page=${page}`);
@@ -69,4 +89,10 @@ function hasMore(headers: Headers, page: number, count: number, size: number): b
   if (next && Number(next) !== page + 1) throw new ApiError(502, 'GitLab 分页信息无效');
   if (more && page >= 500) throw new ApiError(422, '项目数据超过单次加载上限，请缩小项目范围');
   return more;
+}
+
+function reference(data: unknown): BranchReference {
+  const item = data as { name?: unknown; commit?: { id?: unknown; title?: unknown; committed_date?: unknown } };
+  if (typeof item?.name !== 'string' || typeof item.commit?.id !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(item.commit.id)) throw new ApiError(502, 'GitLab 分支提交信息无效');
+  return { name: item.name, sha: item.commit.id, title: typeof item.commit.title === 'string' ? item.commit.title : '', committedDate: typeof item.commit.committed_date === 'string' ? item.commit.committed_date : undefined };
 }

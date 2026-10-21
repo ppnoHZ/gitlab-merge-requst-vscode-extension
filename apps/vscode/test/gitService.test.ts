@@ -159,6 +159,15 @@ async function runTests(): Promise<void> {
     assert.equal((await faultService.getBranchesMergedIntoMain(faultBranches)).size, 9);
     assert.equal(failedAttempts, 2, 'failed comparisons must be retried, not cached as unmerged');
 
+    // Description data must contain only the selected source/target range, not HEAD fallback.
+    assert.deepEqual(await service.getCommitsBetween('main', 'main'), []);
+    assert.deepEqual(await service.getCommitsBetween('same-as-main', 'main'), []);
+    const pendingHistory = await service.getCommitsBetween('bugfix/pending', 'main');
+    assert.deepEqual(pendingHistory.map(commit => commit.title), ['Update pending.txt']);
+    assert.deepEqual(await service.getChangedFiles('bugfix/pending', 'main'), ['A\tpending.txt']);
+    assert.deepEqual(await service.getChangedFiles('main', 'main'), []);
+    await assert.rejects(service.getCommitsBetween('missing-description-ref', 'main'), /找不到分支引用/);
+    await assert.rejects(service.getChangedFiles('missing-description-ref', 'main'), /找不到分支引用/);
     git(checkout, 'remote', 'remove', 'origin');
     await assert.rejects(service.getBranchesMergedIntoMain(branches), /origin/);
     console.log('[PASS] main merge checks: normal/squash/rebase, pending/conflicts, fresh remote refs, unchanged worktree, errors');

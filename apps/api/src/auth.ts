@@ -40,7 +40,7 @@ export class OAuthSessions {
     this.pending.set(id, { state, verifier, expires: Date.now() + 5 * 60000 });
     this.setCookie(response, pendingCookie, id, 300);
     const query = new URLSearchParams({ client_id: this.config.clientId, redirect_uri: this.config.redirectUri, response_type: 'code',
-      scope: 'read_user read_api read_repository', state, code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url') });
+      scope: this.config.allowBranchCreation ? 'api read_repository' : 'read_user read_api read_repository', state, code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url') });
     response.writeHead(302, { Location: `${this.config.url}/oauth/authorize?${query}` });
     response.end();
   }

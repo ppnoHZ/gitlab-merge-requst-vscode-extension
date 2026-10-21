@@ -90,6 +90,7 @@ test('OAuth through GitLab HTTP to project/branch/MR overview; permissions, expi
     const headers = { cookie: session };
     const status = await (await fetch(`${appBase}/api/status`, { headers })).json() as WebStatus;
     assert(status.gitlab.connected && status.gitlab.configured && status.csrfToken);
+    assert.equal((await fetch(`${appBase}/api/projects/1/branches/preview`, { method: 'POST', headers: { cookie: session, Origin: 'http://127.0.0.1:5173', 'X-CSRF-Token': status.csrfToken!, 'Content-Type': 'application/json' }, body: '{}' })).status, 403, 'read-only deployments must reject branch creation');
     assert.deepEqual(status.gitlab.user, { id: 7, name: 'Alice', username: 'alice' });
     assert(!JSON.stringify(status).includes('test-access-token'));
     assert(!JSON.stringify(status).includes('must-not-leak'));

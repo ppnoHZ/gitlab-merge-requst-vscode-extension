@@ -61,3 +61,23 @@ cp apps/api/.env.example apps/api/.env
 本机 HTTP/Git 集成测试通过 `pnpm run test:integration` 单独执行，不作为发布前单元测试的阻断项。API 集成测试使用真实本地 HTTP 模拟 GitLab，覆盖健康检查、授权/PKCE/state、Token 刷新、权限、分页和会话退出；Git 测试通过带鉴权的 HTTP Git 服务验证正常合并、squash/rebase、冲突、未合并及远程新增提交。显式运行集成测试时，失败仍返回非零退出码。
 
 这些测试不是公司 GitLab 实例联调。目前公司配置按要求留空，实际 OAuth 回调、证书与访问权限需填好配置后验证。CI、审批和部署状态不在上线判断范围内。共享核心修改后需重新 `pnpm run build:core`；现有开发启动器仅监视 Web 和 API。
+
+## 新建 release / hotfix
+
+选择项目后，可在页面展开「新建 release / hotfix」。第一版仅创建远程分支，不切换本地分支、不自动创建 MR，也不修改 VS Code API。
+
+默认部署保持只读。启用创建需要：
+
+1. 在 GitLab OAuth 应用中允许 `api` 和 `read_repository` scope。
+2. 在 `apps/api/.env` 设置 `GITLAB_ALLOW_BRANCH_CREATION=true`，重新启动 API 并重新登录授权。此模式请求 `api read_repository`；关闭时仍请求原来的只读 scopes。
+3. 保证审计目录可持久写入。`WORKBENCH_DATA_DIR` 默认是 API 工作目录的 `.data`；生产应指向持久卷并限制访问。创建意图写入失败时不执行远程创建。
+
+操作流程：选 release/hotfix → 填版本号（hotfix 必填工单号，可选英文短描述）→ 选择基线分支或 Tag → 点击「预览并校验」→ 核对基线名称、完整 SHA、最近提交和名称 → 确认创建。默认主分支会作为可选默认基线，hotfix 可切换为线上发布 Tag，避免混入未上线代码。
+
+名称规则为 `release/<版本>` 和 `hotfix/<版本>/<工单号>[-描述]`。基线通过 GitLab 的分支/Tag 专属接口解析，防止同名分支和 Tag 混淆。预览确认绑定当前会话和项目，有效期 5 分钟；创建前重新查询基线 SHA 和同名分支，使用确认的不可变 SHA 创建，基线变化则要求重新预览。
+
+重复确认共用一次创建任务。创建请求超时或响应不明时，先查询远程分支及 SHA；若一致，界面显示「已核对远程分支与确认提交一致」，不声称该分支一定由本次请求创建。仍无法确认时，同一确认仅用于查询，绝不自动再次 POST；超过确认有效期应在 GitLab 人工核对结果。创建成功后刷新总览，可打开分支或复制名称。
+
+审计文件为 `branch-creations.jsonl`，记录用户、项目、基线、SHA 和请求/成功/失败/不确定结果，不包含 Token。若远程成功而结果审计失败，页面明确提示核对审计，不要求重复创建。GitLab 的保护分支规则和账号权限继续生效。
+
+hotfix 在本版总览中尚不归入 feature → release 的变更统计；创建后的提示会引导修复回主分支，并同步维护中的 release。后续可单独设计 hotfix 发布视图。

@@ -13,7 +13,7 @@ test('HTTP API reports health and disconnected state, and rejects unknown routes
     assert.equal(health.status, 200);
     assert.equal(health.headers.get('cache-control'), 'no-store');
     assert.deepEqual(await health.json(), { status: 'ok', service: 'gitlab-workbench-api' });
-    assert.deepEqual(await (await fetch(`${base}/api/status`)).json(), { status: 'ok', gitlab: { connected: false, configured: false } });
+    assert.deepEqual(await (await fetch(`${base}/api/status`)).json(), { status: 'ok', gitlab: { connected: false, configured: false }, branchCreationEnabled: false });
     assert.equal((await fetch(`${base}/api/unknown`)).status, 404);
     assert.equal((await fetch(`${base}/api/status`, { method: 'POST' })).status, 404);
   } finally {

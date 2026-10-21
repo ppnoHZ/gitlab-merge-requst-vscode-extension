@@ -273,63 +273,26 @@ export class GitService {
    * 获取 sourceBranch 相对于 targetBranch 的 Commits 历史
    */
   async getCommitsBetween(sourceBranch: string, targetBranch: string): Promise<GitCommitInfo[]> {
-    try {
-      const sourceRef = await this.resolveBranchRef(sourceBranch);
-      const targetRef = await this.resolveBranchRef(targetBranch);
-
-      // 获取格式化 commits: %H|%h|%s|%an|%ad
-      const format = '%H|%h|%s|%an|%ad';
-      const output = await this.runGit([
-        'log',
-        `${targetRef}..${sourceRef}`,
-        `--pretty=format:${format}`,
-        '--date=short',
-        '--no-merges'
-      ]);
-
-      if (!output.trim()) {
-        // 如果没有 commits，尝试获取最近 1 条 commit 作为兜底
-        const lastCommit = await this.runGit([
-          'log',
-          '-1',
-          `--pretty=format:${format}`,
-          '--date=short'
-        ]);
-        if (lastCommit.trim()) {
-          const [hash, shortHash, title, author, date] = lastCommit.trim().split('|');
-          return [{ hash, shortHash, title, author, date }];
-        }
-        return [];
-      }
-
-      const lines = output.split('\n');
-      return lines.map(line => {
-        const [hash, shortHash, title, author, date] = line.split('|');
-        return {
-          hash: hash || '',
-          shortHash: shortHash || '',
-          title: title || '',
-          author: author || '',
-          date: date || ''
-        };
-      });
-    } catch (error) {
-      Logger.warn(`无法获取 ${sourceBranch} 相对 ${targetBranch} 的提交记录`, error);
-      return [];
-    }
+    const sourceRef = await this.resolveBranchRef(sourceBranch);
+    const targetRef = await this.resolveBranchRef(targetBranch);
+    // Source-only history; never substitute HEAD when the range is empty.
+    // NUL fields preserve titles and authors containing pipes.
+    const output = await this.runGit([
+      'log', `${targetRef}..${sourceRef}`,
+      '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ad', '--date=short', '--'
+    ]);
+    if (!output) return [];
+    return output.split('\n').map(line => {
+      const [hash, shortHash, title, author, date] = line.split('\0');
+      return { hash, shortHash, title, author, date };
+    });
   }
 
-  /**
-   * 获取变动文件清单状态 (如 M  file.ts, A  file2.ts)
-   */
+  /** Files introduced by source since its merge base with target, as shown by an MR. */
   async getChangedFiles(sourceBranch: string, targetBranch: string): Promise<string[]> {
-    try {
-      const sourceRef = await this.resolveBranchRef(sourceBranch);
-      const targetRef = await this.resolveBranchRef(targetBranch);
-      const output = await this.runGit(['diff', '--name-status', `${targetRef}...${sourceRef}`]);
-      return output.split('\n').filter(Boolean);
-    } catch {
-      return [];
-    }
+    const sourceRef = await this.resolveBranchRef(sourceBranch);
+    const targetRef = await this.resolveBranchRef(targetBranch);
+    const output = await this.runGit(['diff', '--name-status', `${targetRef}...${sourceRef}`, '--']);
+    return output.split('\n').filter(Boolean);
   }
 }
