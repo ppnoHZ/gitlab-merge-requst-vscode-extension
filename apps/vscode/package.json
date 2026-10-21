@@ -49,7 +49,8 @@
     "onCommand:gitlabMr.clearBranchStatusFilters",
     "onCommand:gitlabMr.filterReleaseOverview",
     "onCommand:gitlabMr.clearReleaseOverviewFilters",
-    "workspaceContains:.git"
+    "workspaceContains:.git",
+    "onCommand:gitlabMr.mergePendingReview"
   ],
   "contributes": {
     "commands": [
@@ -242,6 +243,12 @@
         "command": "gitlabMr.setToken",
         "title": "Set Access Token (快速录入 Token)",
         "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.mergePendingReview",
+        "title": "Merge MR Now (立即合并 MR)",
+        "category": "GitLab MR",
+        "icon": "$(git-merge)"
       }
     ],
     "configuration": {
@@ -439,6 +446,10 @@
         {
           "command": "gitlabMr.createMainMergeRequest",
           "when": "false"
+        },
+        {
+          "command": "gitlabMr.mergePendingReview",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -585,6 +596,16 @@
           "command": "gitlabMr.openReleaseMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(open|merged|closed)/",
           "group": "inline"
+        },
+        {
+          "command": "gitlabMr.mergePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "inline@2"
+        },
+        {
+          "command": "gitlabMr.mergePendingReview",
+          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "group": "review"
         }
       ]
     }
