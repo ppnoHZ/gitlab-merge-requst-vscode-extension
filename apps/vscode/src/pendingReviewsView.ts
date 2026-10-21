@@ -3,16 +3,21 @@ import { GitLabService } from './gitlabService';
 import { Logger } from './logger';
 import { ReviewMergeRequest, ReviewProject } from './types';
 import { MergeRequestReview, ReviewFile } from './mergeRequestReview';
+import { hasMergeConflicts, canCreateConflict, conflictResolutionHint } from './conflictRules';
+import { createConflictFromMergeRequest } from './conflictWorkflow';
+
+type TodoCategory = 'review' | 'authored';
 
 export class PendingReviewItem extends vscode.TreeItem {
   constructor(
-    readonly kind: 'project' | 'request' | 'file' | 'message',
+    readonly kind: 'category' | 'project' | 'request' | 'file' | 'message',
     label: string,
     collapsibleState = vscode.TreeItemCollapsibleState.None,
     readonly project?: ReviewProject,
     readonly request?: ReviewMergeRequest,
     readonly projectId = project?.id,
-    readonly file?: ReviewFile
+    readonly file?: ReviewFile,
+    readonly category: TodoCategory = 'review'
   ) {
     super(label, collapsibleState);
   }
@@ -22,7 +27,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   private readonly emitter = new vscode.EventEmitter<PendingReviewItem | undefined>();
   readonly onDidChangeTreeData = this.emitter.event;
   private roots: PendingReviewItem[] = [];
-  private children = new Map<number, PendingReviewItem[]>();
+  private children = new Map<string, PendingReviewItem[]>();
   private generation = 0;
   private loading = false;
   private service: GitLabService | undefined;
@@ -35,7 +40,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   loaded = false;
   summary = '';
 
-  constructor(private readonly connect: (prompt: boolean) => Promise<GitLabService | undefined>) {}
+  constructor(private readonly connect: (prompt: boolean) => Promise<GitLabService | undefined>, private readonly includeAuthored = false) {}
 
   getTreeItem(item: PendingReviewItem): vscode.TreeItem {
     return item;
@@ -44,8 +49,8 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   getChildren(parent?: PendingReviewItem): PendingReviewItem[] {
     const children = parent?.kind === 'request'
       ? this.files.get(parent) ?? [this.changesMessage(parent, '点击加载变更文件')]
-      : parent?.kind === 'project' && parent.projectId !== undefined
-        ? this.children.get(parent.projectId) ?? []
+      : (parent?.kind === 'project' || parent?.kind === 'category') && parent.id !== undefined
+        ? this.children.get(parent.id) ?? []
         : parent ? [] : this.roots;
     for (const child of children) {
       this.parents.set(child, parent);
@@ -146,141 +151,180 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   }
 
   async approve(item: PendingReviewItem): Promise<boolean> {
+    if (item.category !== 'review') throw new Error('请从“待我审批”选择需要批准的 MR。');
     const { request, service, userId } = this.requireRequest(item);
     return this.review.approve(request, service, userId);
   }
 
   async merge(item: PendingReviewItem): Promise<boolean> {
+    if (item.category !== 'review') throw new Error('请从“待我审批”完成审阅后合并 MR。');
     const { request, service, userId } = this.requireRequest(item);
     return this.review.merge(request, service, userId);
+  }
+
+  async createConflict(item: PendingReviewItem): Promise<boolean> {
+    const { request, service } = this.requireRequest(item);
+    return createConflictFromMergeRequest(service, request, () => { this.requireRequest(item); });
   }
 
   private message(label: string, retry = false): PendingReviewItem {
     const item = new PendingReviewItem('message', label);
     if (retry) {
-      item.command = { command: 'gitlabMr.refreshPendingReviews', title: '刷新待我审批' };
+      item.command = { command: 'gitlabMr.refreshPendingReviews', title: '刷新我的待办' };
       item.iconPath = new vscode.ThemeIcon('warning');
     }
     return item;
   }
 
   async refresh(prompt = true): Promise<void> {
-    if (this.loading) {
-      return;
-    }
+    if (this.loading) return;
     const generation = ++this.generation;
+    const viewName = this.includeAuthored ? '我的待办' : '待我审批';
     this.loading = true;
     this.loaded = false;
     this.summary = '正在加载...';
-    this.roots = [this.message('正在加载待我审批的 MR...')];
+    this.roots = [this.message(`正在加载${viewName}的 MR...`)];
     this.children.clear();
     this.clearReview();
     this.emitter.fire(undefined);
     try {
       const service = await this.connect(prompt);
-      if (generation !== this.generation) {
-        return;
-      }
+      if (generation !== this.generation) return;
       if (!service) {
-        this.roots = [this.message('请配置 GitLab Token，点击加载待我审批的 MR', true)];
+        this.roots = [this.message(`请配置 GitLab Token，点击加载${viewName}的 MR`, true)];
         this.summary = '未配置 Token';
         return;
       }
       const user = await service.getCurrentUser();
-      if (!Number.isSafeInteger(user.id) || user.id <= 0) {
-        throw new Error('GitLab 当前用户响应缺少有效 ID。');
-      }
-      const requests = await service.getReviewMergeRequests(user.id);
-      if (generation !== this.generation) {
-        return;
+      if (!Number.isSafeInteger(user.id) || user.id <= 0) throw new Error('GitLab 当前用户响应缺少有效 ID。');
+      const categories: TodoCategory[] = this.includeAuthored ? ['authored', 'review'] : ['review'];
+      const lists = await Promise.allSettled(categories.map(category => category === 'authored'
+        ? service.getAuthoredMergeRequests(user.id) : service.getReviewMergeRequests(user.id)));
+      if (generation !== this.generation) return;
+      if (lists.every(result => result.status === 'rejected')) {
+        throw new Error(lists.map(result => result.status === 'rejected' ? String(result.reason) : '').join('; '));
       }
       this.service = service;
       this.userId = user.id;
       const projects = new Map<number, Promise<ReviewProject>>();
-      const groups = new Map<number, { project?: ReviewProject; items: PendingReviewItem[] }>();
-      let pending = 0;
-      let failed = 0;
-      for (let offset = 0; offset < requests.length; offset += 5) {
-        if (generation !== this.generation) {
-          return;
-        }
-        await Promise.all(requests.slice(offset, offset + 5).map(async request => {
+      const states = new Map<number, Promise<ReviewMergeRequest>>();
+      const groups = new Map<string, { category: TodoCategory; projectId: number; project?: ReviewProject; items: PendingReviewItem[] }>();
+      const categoryErrors = new Map<TodoCategory, string>();
+      const counts = { authored: 0, review: 0 };
+      const tasks: Array<{ request: ReviewMergeRequest; category: TodoCategory }> = [];
+      lists.forEach((result, index) => {
+        const category = categories[index];
+        if (result.status === 'rejected') categoryErrors.set(category, String(result.reason));
+        else tasks.push(...result.value.map(request => ({ request, category })));
+      });
+      let failed = categoryErrors.size;
+      for (let offset = 0; offset < tasks.length; offset += 5) {
+        if (generation !== this.generation) return;
+        await Promise.all(tasks.slice(offset, offset + 5).map(async ({ request: listedRequest, category }) => {
+          let request = listedRequest;
+          const key = `${category}:${request.project_id}`;
+          const group = () => groups.get(key) ?? { category, projectId: request.project_id, items: [] as PendingReviewItem[] };
           try {
-            if (await service.hasUserApprovedMergeRequest(request.project_id, request.iid, user.id)) {
-              return;
+            if (category === 'review' && await service.hasUserApprovedMergeRequest(request.project_id, request.iid, user.id)) return;
+            let statusUnknown = false;
+            // Older GitLab list endpoints may omit merge metadata. Keep the MR visible if its detail query fails.
+            if (this.includeAuthored && request.has_conflicts === undefined && request.detailed_merge_status === undefined) {
+              let state = states.get(request.id);
+              if (!state) {
+                state = service.getMergeRequestConflictState(request.project_id, request.iid);
+                states.set(request.id, state);
+              }
+              try { request = { ...request, ...await state }; }
+              catch (error) {
+                statusUnknown = true;
+                Logger.warn(`MR !${request.iid} 冲突状态查询失败`, error);
+              }
             }
+            if (request.state !== 'opened') return;
             let projectPromise = projects.get(request.project_id);
             if (!projectPromise) {
               projectPromise = service.getReviewProject(request.project_id);
               projects.set(request.project_id, projectPromise);
             }
             const project = await projectPromise;
-            const group = groups.get(project.id) ?? { project, items: [] };
-            group.project = project;
+            const currentGroup = group();
+            currentGroup.project = project;
+            const conflicted = hasMergeConflicts(request);
+            const canCreate = conflicted && canCreateConflict(request.source_branch, request.target_branch) &&
+              (request.source_project_id === undefined || request.target_project_id === undefined || request.source_project_id === request.target_project_id);
             const item = new PendingReviewItem('request', `!${request.iid} ${request.title}`,
-              vscode.TreeItemCollapsibleState.Collapsed, project, request);
-            item.id = `pending-review:${project.id}:${request.iid}`;
-            item.contextValue = 'pendingReviewRequest';
+              vscode.TreeItemCollapsibleState.Collapsed, project, request, project.id, undefined, category);
+            item.id = `${category === 'review' ? 'pending-review' : 'authored-mr'}:${project.id}:${request.iid}`;
+            item.contextValue = `${category === 'review' ? 'pendingReviewRequest' : 'authoredMergeRequest'}${conflicted ? '-conflict' : ''}${canCreate ? '-canCreateConflict' : ''}`;
             const author = request.author?.name || request.author?.username || '未知';
             const username = request.author?.username ? ` (@${request.author.username})` : '';
-            item.description = [
-              `${request.source_branch} → ${request.target_branch}`, `提交人: ${author}${username}`,
-              request.draft ? '草稿' : undefined
-            ].filter(Boolean).join(' · ');
-            item.tooltip = `${request.title}\n${project.path_with_namespace}\nMR: !${request.iid} · ID: ${request.id}\n${request.source_branch} → ${request.target_branch}\nSource: ${request.source_branch}\nTarget: ${request.target_branch}\n提交人: ${author}${username}\n指定我为 Reviewer，尚未批准`;
-            item.iconPath = new vscode.ThemeIcon('git-pull-request');
+            const checking = ['checking', 'unchecked', 'preparing', 'approvals_syncing'].includes(request.detailed_merge_status ?? '');
+            const status = conflicted ? '有冲突' : statusUnknown ? '冲突状态查询失败' : checking ? '合并状态计算中'
+              : request.has_conflicts === undefined && request.detailed_merge_status === undefined ? '冲突状态未知' : undefined;
+            item.description = [status, `${request.source_branch} → ${request.target_branch}`, `提交人: ${author}${username}`, request.draft ? '草稿' : undefined].filter(Boolean).join(' · ');
+            const role = category === 'authored' ? '我提交的开放 MR' : '指定我为 Reviewer，尚未批准';
+            const fork = request.source_project_id !== undefined && request.target_project_id !== undefined && request.source_project_id !== request.target_project_id;
+            const hint = conflicted ? `\n有代码冲突：${fork ? '跨仓库 MR 暂不支持快速创建 conflict，请在 GitLab 核对源仓库后处理' : conflictResolutionHint(request.source_branch, request.target_branch)}` : status ? `\n${status}，请刷新重试` : '';
+            item.tooltip = `${request.title}\n${project.path_with_namespace}\nMR: !${request.iid} · ID: ${request.id}\n${request.source_branch} → ${request.target_branch}\nSource: ${request.source_branch}\nTarget: ${request.target_branch}\n提交人: ${author}${username}\n${role}${hint}`;
+            item.iconPath = conflicted ? new vscode.ThemeIcon('git-pull-request', new vscode.ThemeColor('errorForeground')) : new vscode.ThemeIcon('git-pull-request');
             item.command = { command: 'gitlabMr.showPendingReviewChanges', title: '查看 MR 变更文件', arguments: [item] };
-            group.items.push(item);
-            groups.set(project.id, group);
-            pending++;
+            currentGroup.items.push(item);
+            groups.set(key, currentGroup);
+            counts[category]++;
           } catch (error) {
             failed++;
-            Logger.error(`查询待审批 MR 失败: Project ${request.project_id} !${request.iid}`, error);
-            const group = groups.get(request.project_id) ?? { items: [] };
-            group.items.push(this.message(
-              `!${request.iid} ${request.title} 查询失败: ${error instanceof Error ? error.message : String(error)}`, true
-            ));
-            groups.set(request.project_id, group);
+            Logger.error(`查询${viewName} MR 失败: Project ${request.project_id} !${request.iid}`, error);
+            const currentGroup = group();
+            currentGroup.items.push(this.message(`!${request.iid} ${request.title} 查询失败: ${error instanceof Error ? error.message : String(error)}`, true));
+            groups.set(key, currentGroup);
           }
         }));
       }
-      if (generation !== this.generation) {
-        return;
-      }
+      if (generation !== this.generation) return;
       this.roots = [];
-      for (const [id, group] of [...groups].sort(([, a], [, b]) =>
+      const categoryItems = new Map<TodoCategory, PendingReviewItem[]>();
+      for (const category of categories) categoryItems.set(category, []);
+      for (const [, group] of [...groups].sort(([, a], [, b]) =>
         (a.project?.path_with_namespace ?? '').localeCompare(b.project?.path_with_namespace ?? ''))) {
+        const id = group.projectId;
         const item = new PendingReviewItem('project', group.project?.path_with_namespace ?? `Project ${id}（查询未完成）`,
-          vscode.TreeItemCollapsibleState.Collapsed, group.project, undefined, id);
-        item.id = `pending-review-project:${id}`;
+          vscode.TreeItemCollapsibleState.Collapsed, group.project, undefined, id, undefined, group.category);
+        item.id = `${group.category === 'review' ? 'pending-review-project' : 'authored-mr-project'}:${id}`;
         const count = group.items.filter(child => child.kind === 'request').length;
-        item.description = `${count} 个待审批${group.items.some(child => child.kind === 'message') ? ' · 部分查询失败' : ''}`;
+        item.description = `${count} 个${group.category === 'review' ? '待审批' : '我提交的 MR'}${group.items.some(child => child.kind === 'message') ? ' · 部分查询失败' : ''}`;
         item.iconPath = new vscode.ThemeIcon('repo');
-        this.roots.push(item);
-        this.children.set(id, group.items);
-        for (const child of group.items) {
-          if (child.kind === 'request') {
-            this.activeRequests.add(child);
-          }
-        }
+        categoryItems.get(group.category)!.push(item);
+        this.children.set(item.id, group.items);
+        for (const child of group.items) if (child.kind === 'request') this.activeRequests.add(child);
       }
+      if (this.includeAuthored) {
+        for (const category of categories) {
+          const item = new PendingReviewItem('category', category === 'authored' ? '我提交的 MR' : '待我审批',
+            vscode.TreeItemCollapsibleState.Expanded, undefined, undefined, undefined, undefined, category);
+          item.id = `todo-category:${category}`;
+          item.description = `${counts[category]} 个开放 MR${categoryErrors.has(category) ? ' · 加载失败' : ''}`;
+          item.iconPath = new vscode.ThemeIcon(category === 'authored' ? 'git-pull-request' : 'checklist');
+          this.roots.push(item);
+          const error = categoryErrors.get(category);
+          const items = categoryItems.get(category)!;
+          this.children.set(item.id, error ? [this.message(`加载失败，点击重试: ${error}`, true)]
+            : items.length ? items : [this.message(category === 'authored' ? '当前没有你提交的开放 MR' : '当前没有指定你为 Reviewer 且尚未批准的开放 MR')]);
+        }
+      } else this.roots = categoryItems.get('review')!;
       this.loaded = true;
-      this.summary = `${pending} 个待审批 · ${groups.size} 个项目${failed ? ` · ${failed} 个查询失败` : ''}`;
+      this.summary = this.includeAuthored ? `${counts.authored} 个我提交的 · ${counts.review} 个待审批${failed ? ` · ${failed} 个查询失败` : ''}`
+        : `${counts.review} 个待审批 · ${groups.size} 个项目${failed ? ` · ${failed} 个查询失败` : ''}`;
       if (failed) {
         this.roots.unshift(this.message('部分 MR 查询失败，点击重试；结果不完整', true));
-        vscode.window.showWarningMessage('待我审批列表部分查询失败，无法确认的 MR 不计入待审批数量，请刷新重试。');
-      } else if (!pending) {
-        this.roots = [this.message('当前没有指定你为 Reviewer 且尚未批准的开放 MR')];
-      }
+        vscode.window.showWarningMessage(`${viewName}列表部分查询失败，无法确认的 MR 不计入数量，请刷新重试。`);
+      } else if (!this.includeAuthored && !counts.review) this.roots = [this.message('当前没有指定你为 Reviewer 且尚未批准的开放 MR')];
     } catch (error) {
-      if (generation !== this.generation) {
-        return;
-      }
+      if (generation !== this.generation) return;
       const message = error instanceof Error ? error.message : String(error);
-      Logger.error('加载待我审批 MR 失败', error);
+      Logger.error(`加载${viewName} MR 失败`, error);
       this.summary = '加载失败';
       this.roots = [this.message(`加载失败，点击重试: ${message}`, true)];
-      vscode.window.showErrorMessage(`加载待我审批 MR 失败: ${message}`);
+      vscode.window.showErrorMessage(`加载${viewName} MR 失败: ${message}`);
     } finally {
       if (generation === this.generation) {
         this.loading = false;

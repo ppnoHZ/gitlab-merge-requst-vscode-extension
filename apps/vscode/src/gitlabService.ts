@@ -1,3 +1,4 @@
+import { conflictMergeOptions } from './conflictRules';
 import type { BranchReference, BaseKind } from '@gitlab-workbench/core';
 import axios from 'axios';
 import * as https from 'https';
@@ -131,8 +132,17 @@ export class GitLabService {
   }
 
   async getReviewMergeRequests(userId: number): Promise<ReviewMergeRequest[]> {
+    return this.getUserMergeRequests(userId, 'reviewer_id');
+  }
+
+  async getAuthoredMergeRequests(userId: number): Promise<ReviewMergeRequest[]> {
+    return this.getUserMergeRequests(userId, 'author_id');
+  }
+
+  private async getUserMergeRequests(userId: number, filter: 'reviewer_id' | 'author_id'): Promise<ReviewMergeRequest[]> {
+    if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('无效的 GitLab 用户 ID');
     const query = new URLSearchParams({
-      scope: 'all', state: 'opened', reviewer_id: String(userId),
+      scope: 'all', state: 'opened', [filter]: String(userId), with_merge_status_recheck: 'true',
       order_by: 'updated_at', sort: 'desc'
     });
     const requests = await this.getAllPages<ReviewMergeRequest>(`/merge_requests?${query}`);
@@ -141,10 +151,21 @@ export class GitLabService {
       Number.isSafeInteger(request.project_id) && typeof request.title === 'string' &&
       typeof request.web_url === 'string' && /^https?:\/\//i.test(request.web_url)
     )) {
-      throw new Error('GitLab 待审批 MR 列表格式无效。');
+      throw new Error('GitLab 待办 MR 列表格式无效。');
     }
     return [...new Map(requests.filter(request => request.state === 'opened')
       .map(request => [request.id, request])).values()];
+  }
+
+  /** Lightweight detail lookup for list servers which omit conflict metadata. */
+  async getMergeRequestConflictState(projectId: number, iid: number): Promise<ReviewMergeRequest> {
+    const request = await this.request<ReviewMergeRequest>(`/projects/${projectId}/merge_requests/${iid}?with_merge_status_recheck=true`);
+    if (request?.project_id !== projectId || request.iid !== iid ||
+      !Number.isSafeInteger(request.id) || typeof request.state !== 'string' ||
+      typeof request.source_branch !== 'string' || typeof request.target_branch !== 'string') {
+      throw new Error(`MR !${iid} 状态响应无效，请刷新重试。`);
+    }
+    return request;
   }
 
   async hasUserApprovedMergeRequest(projectId: number, iid: number, userId: number): Promise<boolean> {
@@ -499,13 +520,14 @@ export class GitLabService {
       ? encodeURIComponent(payload.projectId)
       : payload.projectId;
 
+    const mergeOptions = conflictMergeOptions(payload.sourceBranch, payload);
     const body: Record<string, any> = {
       source_branch: payload.sourceBranch,
       target_branch: payload.targetBranch,
       title: payload.title,
       description: payload.description,
-      remove_source_branch: payload.removeSourceBranch ?? true,
-      squash: payload.squash ?? false
+      remove_source_branch: mergeOptions.removeSourceBranch ?? true,
+      squash: mergeOptions.squash ?? false
     };
 
     if (payload.reviewerIds && payload.reviewerIds.length > 0) {

@@ -5,11 +5,13 @@ import * as vscode from './vscodeMock';
 import { handleCreateRemoteBranch } from '../src/branchCreation';
 import { GitLabService } from '../src/gitlabService';
 import { GitService } from '../src/gitService';
+import { conflictGuide } from '../src/conflictWorkflow';
+import { validateConflictTarget, conflictMergeOptions } from '../src/conflictRules';
 import { developmentBranchName } from '@gitlab-workbench/core';
 
 async function run() {
   let mainSha = 'a'.repeat(40); const tagSha = 'b'.repeat(40);
-  const remote = new Map<string, string>(); let posts = 0; let lost = false;
+  const remote = new Map<string, string>(); let posts = 0; let lost = false; let targetError = false;
   const tokens = { getToken: async () => 'test-token', promptForToken: async () => undefined };
   const originalRepo = GitService.prototype.getRepoInfo;
   GitService.prototype.getRepoInfo = async () => ({ rootPath: '/test', sourceBranch: 'work', remoteUrl: 'https://gitlab.test/g/p.git', gitlabHost: 'gitlab.test', projectPath: 'g/p' });
@@ -19,17 +21,22 @@ async function run() {
     const ref = (name: string, sha: string) => ({ name, commit: { id: sha, title: 'Baseline commit', committed_date: '2026-10-21T00:00:00Z' } });
     if (path === '/api/v4/user') data = { id: 1, name: 'User', username: 'user' };
     else if (path === '/api/v4/projects/g%2Fp') data = { id: 1, name: 'Project', web_url: 'https://gitlab.test/g/p', default_branch: 'main' };
-    else if (config.method === 'post') {
+    else if (path.endsWith('/merge_requests')) {
+      const body = JSON.parse(config.data);
+      assert.equal(body.remove_source_branch, true); assert.equal(body.squash, false);
+      data = { iid: 1, web_url: 'https://gitlab.test/g/p/-/merge_requests/1' };
+    } else if (config.method === 'post') {
       posts++; const body = JSON.parse(config.data); assert(/^[ab]{40}$/.test(body.ref));
       remote.set(body.branch, body.ref);
       if (lost) throw new Error('connection reset');
       data = ref(body.branch, body.ref);
-    } else if (/repository\/(branches|tags)$/.test(path)) data = path.endsWith('tags') ? [ref('v1', tagSha)] : [ref('main', mainSha), ref('dev', mainSha)];
+    } else if (/repository\/(branches|tags)$/.test(path)) data = path.endsWith('tags') ? [ref('v1', tagSha)] : [ref('main', mainSha), ref('dev', mainSha), ...[...remote].map(([name, sha]) => ref(name, sha))];
     else {
       const match = path.match(/repository\/(branches|tags)\/(.+)$/)!;
       assert(match, path);
       const name = decodeURIComponent(match[2]); const sha = match[1] === 'tags' && name === 'v1' ? tagSha : ['main', 'dev'].includes(name) ? mainSha : remote.get(name);
-      if (sha) data = ref(name, sha); else { status = 404; data = { message: 'not found' }; }
+      if (targetError && name === 'tst') { status = 403; data = { message: 'forbidden' }; }
+      else if (sha) data = ref(name, sha); else { status = 404; data = { message: 'not found' }; }
     }
     return { config, data: JSON.stringify(data), headers: {}, status, statusText: String(status) };
   };
@@ -52,13 +59,58 @@ async function run() {
     assert.equal(remote.get('hotfix/2.7.1/PROJ-1-fix-login'), tagSha);
     remote.set('hotfix/H20260706/FOC-0009', tagSha);
     remote.set('release/LI2500076', tagSha);
-    picks = ['dev']; inputs = ['dev', 'hotfix/H20260706/FOC-0009'];
+    picks = ['hotfix/H20260706/FOC-0009', 'dev']; inputs = ['H20260706'];
     assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'dev'), true);
     assert.equal(remote.get('conflict/hotfix/H20260706/FOC-0009'), mainSha);
     assert(vscode.warnings.at(-1)?.includes('原始分支：hotfix/H20260706/FOC-0009'));
-    picks = ['dev']; inputs = ['dev', 'release/LI2500076'];
-    assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'dev'), true);
+    picks = ['dev']; inputs = [];
+    assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), true);
     assert.equal(remote.get('conflict/release/LI2500076'), mainSha);
+    const guide = vscode.openedDocuments.at(-1)!;
+    assert.equal(guide.language, 'markdown');
+    assert(guide.content.includes("git merge --no-commit --no-ff 'origin/release/LI2500076'"));
+    assert(guide.content.includes('目标分支：`dev`'));
+    assert(guide.content.includes('插件未自动关闭任何 MR'));
+    const conflictPosts = posts;
+    picks = ['dev']; inputs = [];
+    await assert.rejects(handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), /可能正用于其他目标环境/);
+    assert.equal(posts, conflictPosts);
+    remote.delete('conflict/release/LI2500076');
+    picks = [undefined]; inputs = [];
+    assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), false);
+    assert.equal(posts, conflictPosts);
+    picks = ['dev']; inputs = []; targetError = true;
+    await assert.rejects(handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), /forbidden|403/);
+    targetError = false;
+    assert.equal(posts, conflictPosts);
+    picks = ['dev']; inputs = [];
+    vscode.warningDialog.onShow = () => { remote.set('release/LI2500076', 'c'.repeat(40)); };
+    await assert.rejects(handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), /原始源分支提交已变化/);
+    vscode.warningDialog.onShow = undefined; remote.set('release/LI2500076', tagSha);
+    assert.equal(posts, conflictPosts);
+    picks = ['dev']; inputs = [];
+    vscode.warningDialog.onShow = () => { mainSha = 'c'.repeat(40); };
+    await assert.rejects(handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), /基线提交已变化/);
+    vscode.warningDialog.onShow = undefined; mainSha = 'a'.repeat(40);
+    assert.equal(posts, conflictPosts);
+    picks = ['dev']; inputs = []; vscode.warningDialog.value = undefined;
+    assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), false);
+    assert.equal(posts, conflictPosts);
+    vscode.warningDialog.value = '确认创建';
+    const openDocument = vscode.workspace.openTextDocument;
+    vscode.workspace.openTextDocument = async () => { throw new Error('editor unavailable'); };
+    try {
+      picks = ['dev']; inputs = [];
+      assert.equal(await handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), true);
+      assert.equal(posts, conflictPosts + 1);
+      assert(vscode.warnings.at(-1)?.includes('已创建'));
+    } finally { vscode.workspace.openTextDocument = openDocument; }
+    assert.throws(() => validateConflictTarget('release/LI2500076', 'main'), /仅支持/);
+    assert.throws(() => validateConflictTarget('main', 'dev'));
+    assert.throws(() => conflictGuide({ source: { name: 'release/LI2500076', sha: tagSha, title: '' }, target: { name: 'main', sha: mainSha, title: '' }, branch: 'conflict/release/LI2500076' }));
+    assert.deepEqual(conflictMergeOptions('conflict/release/LI2500076', { squash: true, removeSourceBranch: false }), { squash: false, removeSourceBranch: true });
+    assert.deepEqual(conflictMergeOptions('release/LI2500076', { squash: true, removeSourceBranch: false }), { squash: true, removeSourceBranch: false });
+    await new GitLabService('https://gitlab.test', 'test-token').createMergeRequest({ projectId: 1, sourceBranch: 'conflict/release/LI2500076', targetBranch: 'dev', title: 'Conflict', description: '', removeSourceBranch: false, squash: true });
     const before = posts;
     picks = ['分支', 'main']; inputs = ['', '2.9.0']; vscode.warningDialog.value = undefined;
     assert.equal(await handleCreateRemoteBranch(tokens, 'release'), false); assert.equal(posts, before);

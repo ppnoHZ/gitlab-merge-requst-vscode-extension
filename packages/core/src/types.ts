@@ -76,8 +76,12 @@ export interface ReviewMergeRequest {
   web_url: string;
   source_branch: string;
   target_branch: string;
-  author: { name: string; username: string };
+  author: { id?: number; name: string; username: string };
   draft?: boolean;
+  has_conflicts?: boolean;
+  detailed_merge_status?: string;
+  source_project_id?: number;
+  target_project_id?: number;
 }
 
 export interface ReviewProject {

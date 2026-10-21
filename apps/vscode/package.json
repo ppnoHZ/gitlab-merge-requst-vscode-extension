@@ -54,7 +54,8 @@
     "onCommand:gitlabMr.createRemoteBranch",
     "onCommand:gitlabMr.createReleaseBranch",
     "onCommand:gitlabMr.createHotfixBranch",
-    "onCommand:gitlabMr.createConflictBranch"
+    "onCommand:gitlabMr.createConflictBranch",
+    "onCommand:gitlabMr.createConflictFromMergeRequest"
   ],
   "contributes": {
     "commands": [
@@ -152,7 +153,7 @@
       },
       {
         "command": "gitlabMr.refreshPendingReviews",
-        "title": "Refresh Pending Reviews (刷新待我审批的 MR)",
+        "title": "刷新我的待办 MR",
         "category": "GitLab MR",
         "icon": "$(refresh)"
       },
@@ -274,7 +275,13 @@
       },
       {
         "command": "gitlabMr.createConflictBranch",
-        "title": "新建 conflict 分支",
+        "title": "新建 conflict 分支（release/hotfix → 测试环境）",
+        "category": "GitLab MR",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "gitlabMr.createConflictFromMergeRequest",
+        "title": "从此 MR 创建 conflict 分支",
         "category": "GitLab MR",
         "icon": "$(git-branch)"
       }
@@ -407,7 +414,7 @@
         },
         {
           "id": "gitlabMr.pendingReviews",
-          "name": "待我审批"
+          "name": "我的待办"
         },
         {
           "id": "gitlabMr.auditHistory",
@@ -418,7 +425,7 @@
     "viewsWelcome": [
       {
         "view": "gitlabMr.pendingReviews",
-        "contents": "按 Project 展示当前 GitLab 实例中指定你为 Reviewer 且尚未批准的开放 MR。\n[加载待我审批的 MR](command:gitlabMr.refreshPendingReviews)"
+        "contents": "展示我提交的开放 MR 和待我审批的 MR，按项目分组。有冲突的 MR 使用红色图标，可从符合规范的 MR 快速创建 conflict 分支。\n[加载我的待办](command:gitlabMr.refreshPendingReviews)"
       },
       {
         "view": "gitlabMr.releaseReadiness",
@@ -477,6 +484,10 @@
         },
         {
           "command": "gitlabMr.mergePendingReview",
+          "when": "false"
+        },
+        {
+          "command": "gitlabMr.createConflictFromMergeRequest",
           "when": "false"
         }
       ],
@@ -562,22 +573,22 @@
       "view/item/context": [
         {
           "command": "gitlabMr.approvePendingReview",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^pendingReviewRequest/",
           "group": "inline@1"
         },
         {
           "command": "gitlabMr.approvePendingReview",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^pendingReviewRequest/",
           "group": "review"
         },
         {
           "command": "gitlabMr.showPendingReviewChanges",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^(pendingReviewRequest|authoredMergeRequest)/",
           "group": "review"
         },
         {
           "command": "gitlabMr.openPendingReview",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^(pendingReviewRequest|authoredMergeRequest)/",
           "group": "inline"
         },
         {
@@ -632,18 +643,28 @@
         },
         {
           "command": "gitlabMr.mergePendingReview",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^pendingReviewRequest/",
           "group": "inline@2"
         },
         {
           "command": "gitlabMr.mergePendingReview",
-          "when": "view == gitlabMr.pendingReviews && viewItem == pendingReviewRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^pendingReviewRequest/",
           "group": "review"
         },
         {
           "command": "gitlabMr.createConflictBranch",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
           "group": "branchCreation"
+        },
+        {
+          "command": "gitlabMr.createConflictFromMergeRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /-canCreateConflict$/",
+          "group": "inline@0"
+        },
+        {
+          "command": "gitlabMr.createConflictFromMergeRequest",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /-canCreateConflict$/",
+          "group": "conflict"
         }
       ]
     }
@@ -656,11 +677,11 @@
     "package:vsix": "pnpm run test:publish && pnpm run compile && pnpm --package=@vscode/vsce@4.0.0 dlx vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation",
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",
-    "test:branch-creation": "esbuild ./test/branchCreation.test.ts --bundle --outfile=dist/branchCreation.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js"
+    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0"

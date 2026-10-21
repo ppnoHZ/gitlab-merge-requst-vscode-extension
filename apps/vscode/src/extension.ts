@@ -1,4 +1,5 @@
 import { handleCreateRemoteBranch } from './branchCreation';
+import { conflictMergeOptions } from './conflictRules';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { GitService, MainMergeResult } from './gitService';
@@ -132,7 +133,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
     return new GitLabService(instanceUrl, token);
-  });
+  }, true);
   const pendingTreeView = vscode.window.createTreeView('gitlabMr.pendingReviews', {
     treeDataProvider: pendingReviews,
     showCollapseAll: true
@@ -154,7 +155,7 @@ export async function activate(context: vscode.ExtensionContext) {
   };
   const loadReviewChanges = (item?: PendingReviewItem, reveal = true) => runReviewAction('加载 MR 变更失败', async () => {
     if (!item) {
-      throw new Error('请选择待审批 MR。');
+      throw new Error('请选择待办 MR。');
     }
     await pendingReviews.loadChanges(item);
     await Audit.event('review.load-changes', { project: item.request?.project_id, mr: item.request?.iid, source: 'command' });
@@ -174,7 +175,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const approveReviewCmd = registerCommand('gitlabMr.approvePendingReview', (item?: PendingReviewItem) =>
     runReviewAction('批准 MR 失败', async () => {
       if (!item) {
-        throw new Error('请选择待审批 MR。');
+        throw new Error('请选择待办 MR。');
       }
       if (await pendingReviews.approve(item)) {
         vscode.window.showInformationMessage(`已批准 MR !${item.request?.iid}，未执行合并。`);
@@ -185,7 +186,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const mergeReviewCmd = registerCommand('gitlabMr.mergePendingReview', (item?: PendingReviewItem) =>
     runReviewAction('合并 MR 失败', async () => {
       if (!item) {
-        throw new Error('请选择待审批 MR。');
+        throw new Error('请选择待办 MR。');
       }
       if (await pendingReviews.merge(item)) {
         vscode.window.showInformationMessage(`MR !${item.request?.iid} 已合并。`);
@@ -193,11 +194,20 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+  const createConflictFromMrCmd = registerCommand('gitlabMr.createConflictFromMergeRequest', (item?: PendingReviewItem) =>
+    runReviewAction('从 MR 创建 conflict 分支失败', async () => {
+      if (!item) throw new Error('请选择有冲突的 MR。');
+      if (await pendingReviews.createConflict(item)) {
+        await refreshPendingReviews(false);
+        overview.invalidate();
+      }
+    })
+  );
   const openPendingReviewCmd = registerCommand('gitlabMr.openPendingReview', async (item?: PendingReviewItem) => {
     try {
       const url = item?.request?.web_url;
       if (!url || !/^https?:\/\//i.test(url)) {
-        throw new Error('请选择有效的待审批 MR。');
+        throw new Error('请选择有效的待办 MR。');
       }
       if (!await vscode.env.openExternal(vscode.Uri.parse(url))) {
         throw new Error('无法打开浏览器中的 MR 页面。');
@@ -224,7 +234,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(
     pendingReviews, pendingTreeView, refreshPendingReviewsCmd, openPendingReviewCmd,
-    showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd, mergeReviewCmd,
+    showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd, mergeReviewCmd, createConflictFromMrCmd,
     vscode.workspace.registerTextDocumentContentProvider('gitlab-mr-review', pendingReviews.review),
     pendingTreeView.onDidExpandElement(event => {
       if (event.element.kind === 'request') {
@@ -784,8 +794,8 @@ async function createMergeRequestAudited(
   if (defaultReviewers.length === 0) {
     Logger.warn('[Reviewer 配置] 生效配置为空，本次创建 MR 不会指定 Reviewer。请检查 gitlabMr.defaultReviewers 的用户、工作区及文件夹设置。');
   }
-  const removeSourceBranch = config.get<boolean>('removeSourceBranch', true);
-  const squash = config.get<boolean>('squash', false);
+  let removeSourceBranch = config.get<boolean>('removeSourceBranch', true);
+  let squash = config.get<boolean>('squash', false);
   const autoOpenInBrowser = config.get<boolean>('autoOpenInBrowser', true);
 
   // 自动探测 GitLab 地址：若配置仍为默认 gitlab.com，但 remote 探测出私有域名
@@ -872,6 +882,7 @@ async function createMergeRequestAudited(
     Logger.info('用户取消了选择目标分支');
     return false;
   }
+  ({ removeSourceBranch, squash } = conflictMergeOptions(sourceBranch, { removeSourceBranch, squash }));
   Logger.info(`用户选择合并目标分支: ${selectedTarget}`);
 
   // 7. 收集 Commit 历史和变更文件
@@ -902,6 +913,7 @@ async function createMergeRequestAudited(
     promptText = '提示：未在分支/提交中识别到变更单号，请补充标题中的 <CRQ> 后回车';
   }
 
+  if (sourceBranch.startsWith('conflict/')) promptText += '；conflict MR 固定：合并后删除源分支、不 Squash';
   const finalTitle = await vscode.window.showInputBox({
     title: '确认 Merge Request 标题',
     prompt: promptText,
