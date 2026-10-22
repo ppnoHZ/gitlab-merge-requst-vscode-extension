@@ -36,7 +36,7 @@ export class GitLabService implements RepositoryProvider {
     return { instance: this.baseUrl.replace(/\/api\/v4$/, ''), ...this.actor, source: 'api' };
   }
 
-  constructor(instanceUrl: string, token: string) {
+  constructor(instanceUrl: string, token: string, private readonly readSignal?: AbortSignal) {
     // 去除末尾斜杠
     const sanitized = instanceUrl.replace(/\/+$/, '');
     this.baseUrl = `${sanitized}/api/v4`;
@@ -59,7 +59,8 @@ export class GitLabService implements RepositoryProvider {
       response = await axios.request<string>({
         url: fullUrl,
         method,
-        timeout: options.timeout,
+        timeout: options.timeout ?? 20000,
+        signal: method === 'GET' ? this.readSignal : undefined,
         data: options.body,
         headers: {
           'PRIVATE-TOKEN': this.token,

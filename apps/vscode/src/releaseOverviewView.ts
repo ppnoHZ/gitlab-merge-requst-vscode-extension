@@ -56,7 +56,6 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
     if (this.loading) return;
     const generation = ++this.generation;
     this.loading = true;
-    this.snapshot = undefined;
     this.message = '正在加载全部分支、MR 和 main 合入状态…';
     this.emitter.fire(undefined);
     try {
@@ -77,7 +76,7 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
   getTreeItem(item: ReleaseOverviewItem): vscode.TreeItem { return item; }
   getChildren(parent?: ReleaseOverviewItem): ReleaseOverviewItem[] {
     if (parent) return parent.children;
-    if (!this.snapshot || !this.snapshot.entries.length) return [new ReleaseOverviewItem(this.message)];
+    if (!this.snapshot || !this.snapshot.entries.length) return [new ReleaseOverviewItem(this.snapshot && (this.loading || this.message.startsWith('加载失败')) ? `${this.message} · 保留 ${this.snapshot.updatedAt} 的旧结果` : this.message)];
     const visible = this.getVisibleEntries();
     if (!visible.length) {
       const empty = new ReleaseOverviewItem('没有匹配的上线分支，点击清除筛选');
@@ -86,7 +85,7 @@ export class ReleaseOverviewProvider implements vscode.TreeDataProvider<ReleaseO
     }
     const versions = new Map<string, ReleaseOverviewEntry[]>();
     for (const entry of visible) versions.set(entry.version, [...(versions.get(entry.version) ?? []), entry]);
-    return [new ReleaseOverviewItem(`${this.snapshot.project} · ${new Date(this.snapshot.updatedAt).toLocaleString()}`),
+    return [...(this.loading || this.message.startsWith('加载失败') ? [new ReleaseOverviewItem(`${this.loading ? '正在更新' : this.message} · 以下为旧数据`)] : []), new ReleaseOverviewItem(`${this.snapshot.project} · ${new Date(this.snapshot.updatedAt).toLocaleString()}`),
       ...Array.from(versions, ([version, entries]) => new ReleaseOverviewItem(version, entries.map(entry => this.releaseItem(entry))))];
   }
   private releaseItem(entry: ReleaseOverviewEntry): ReleaseOverviewItem {

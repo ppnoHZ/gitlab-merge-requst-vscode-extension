@@ -148,7 +148,7 @@ async function runTests(): Promise<void> {
   failList = true;
   await provider.refresh();
   assert.equal(provider.loaded, false);
-  assert.equal(provider.summary, '加载失败');
+  assert.match(provider.summary, /更新失败.*旧数据/);
   assert.match(String(provider.getChildren()[0].label), /List unavailable/);
   assert.match(errorMessages.at(-1) ?? '', /List unavailable/);
   failList = false;

@@ -38,7 +38,7 @@ export class GitHubProvider implements RepositoryProvider {
   private readonly projects = new Map<number, ReviewProject & ProviderProject>();
   private readonly users = new Map<number, GitLabUser>();
   private static readonly creating = new Set<string>();
-  constructor(readonly connection: ProviderConnection, private readonly token: string) {}
+  constructor(readonly connection: ProviderConnection, private readonly token: string, private readonly readSignal?: AbortSignal) {}
   get auditContext(): AuditContext { return { instance: this.connection.instanceUrl, ...this.actor, source: 'api' }; }
 
   private async request<T>(path: string, method = 'GET', body?: unknown): Promise<{ data: T; hasMore: boolean }> {
@@ -46,6 +46,7 @@ export class GitHubProvider implements RepositoryProvider {
     try {
       response = await axios.request({ url: `${this.connection.apiUrl}${path}`, method, data: body,
         headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'vscode-code-workbench' },
+        signal: method === 'GET' ? this.readSignal : undefined,
         timeout: 20000, maxRedirects: 0, responseType: 'json', validateStatus: () => true });
     } catch { throw new AuditApiError('连接 GitHub 失败；写入结果可能尚未确认，请核对远程状态后再操作'); }
     debugLog(`[GitHub API] ${response.status} ${method} ${path}`);
@@ -100,7 +101,7 @@ export class GitHubProvider implements RepositoryProvider {
     if (!Array.isArray(data)) throw new AuditApiError('GitHub 分支列表无效');
     const names = data.map(value => { const item = object(value); if (typeof item.name !== 'string') throw new AuditApiError('GitHub 分支名称无效'); return item.name; });
     // GitHub does not implement GitLab's branch search parameter. Filter each page, preserving its continuation.
-    return { items: names.filter(name => name.toLowerCase().includes(search.toLowerCase())), hasMore };
+    return { items: names.filter(name => matchesBranchSearch(name, search)), hasMore };
   }
   async getBranchCreationRefs(project: number, kind: BaseKind, page = 1, search = ''): Promise<{ items: BranchReference[]; hasMore: boolean }> {
     const { data, hasMore } = await this.request<unknown[]>(`${await this.path(project)}/${kind === 'tag' ? 'tags' : 'branches'}?per_page=100&page=${page}`);
@@ -110,7 +111,7 @@ export class GitHubProvider implements RepositoryProvider {
       if (typeof item.name !== 'string') throw new AuditApiError('GitHub 基线名称无效');
       return { name: item.name, sha: sha(item.commit?.sha), title: '' };
     });
-    return { items: items.filter(item => item.name.toLowerCase().includes(search.toLowerCase())), hasMore };
+    return { items: items.filter(item => matchesBranchSearch(item.name, search)), hasMore };
   }
   async getBranchCreationRef(project: number, kind: BaseKind, name: string): Promise<BranchReference> {
     branchRefName(name);
@@ -232,4 +233,15 @@ export class GitHubProvider implements RepositoryProvider {
   async getReviewFileContent(_p: number, _f: string, _s: string): Promise<string> { return this.unsupported('PR 文件'); }
   async approveReview(_p: number, _i: number, _s: string, _u: number): Promise<void> { this.unsupported('审批'); }
   async mergeReview(_p: number, _i: number, _s: string, _u: number): Promise<void> { this.unsupported('合并'); }
+}
+
+/** GitLab search uses optional ^/$ anchors; treat the interior as literal text. */
+export function matchesBranchSearch(name: string, search: string): boolean {
+  const start = search.startsWith('^'); const end = search.endsWith('$');
+  const term = search.slice(start ? 1 : 0, end ? -1 : undefined).toLowerCase();
+  const value = name.toLowerCase();
+  if (start && end) return value === term;
+  if (start) return value.startsWith(term);
+  if (end) return value.endsWith(term);
+  return value.includes(term);
 }

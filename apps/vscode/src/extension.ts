@@ -5,7 +5,7 @@ import { conflictMergeOptions } from './conflictRules';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { GitService, MainMergeResult } from './gitService';
-import { createRepositoryProvider } from './providers/factory';
+import { createRepositoryProvider, invalidateRepositoryProviders } from './providers/factory';
 import { configuredConnection } from './providers/connection';
 import { TemplateEngine } from './templateEngine';
 import { TokenManager } from './tokenManager';
@@ -60,6 +60,16 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
 
   const tokenManager = new TokenManager(context);
+  context.subscriptions.push(
+    { dispose: invalidateRepositoryProviders },
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (['provider', 'instanceUrl', 'githubApiUrl', 'accessToken'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) invalidateRepositoryProviders();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(invalidateRepositoryProviders),
+    context.secrets.onDidChange(event => {
+      if (event.key === 'gitlabMr.personalAccessToken' || event.key.startsWith('gitlabMr.credentials:')) invalidateRepositoryProviders();
+    })
+  );
   const conflictSessions = new ConflictSessions(context.globalState, tokenManager);
   context.subscriptions.push(registerCommand('gitlabMr.continueConflict', () => conflictSessions.resume()));
   const approvalStatus = new ReviewStatus(async () => {

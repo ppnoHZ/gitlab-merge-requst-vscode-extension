@@ -39,6 +39,8 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   readonly review = new MergeRequestReview();
   loaded = false;
   summary = '';
+  private updatedAt?: string;
+  private stale = false;
 
   constructor(private readonly connect: (prompt: boolean) => Promise<RepositoryProvider | undefined>, private readonly includeAuthored = false) {}
 
@@ -51,7 +53,9 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       ? this.files.get(parent) ?? [this.changesMessage(parent, '点击加载变更文件')]
       : (parent?.kind === 'project' || parent?.kind === 'category') && parent.id !== undefined
         ? this.children.get(parent.id) ?? []
-        : parent ? [] : this.roots;
+        : parent ? [] : (this.updatedAt && (this.loading || this.stale)
+          ? [this.message(`${this.loading ? '正在更新' : this.summary} · 以下为 ${this.updatedAt} 的旧数据，操作前需刷新`, this.stale), ...this.roots]
+          : this.roots);
     if (parent?.kind === 'request' && parent.request && hasMergeConflicts(parent.request)) {
       const reason = conflictCreationBlockReason(parent.request);
       const action = new PendingReviewItem('action', reason ? '查看冲突处理方式（此场景不创建 conflict）' : '创建 conflict 分支…');
@@ -76,6 +80,8 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     this.loading = false;
     this.loaded = false;
     this.summary = '';
+    this.updatedAt = undefined;
+    this.stale = false;
     this.roots = [];
     this.children.clear();
     this.clearReview();
@@ -101,6 +107,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   }
 
   private requireRequest(item: PendingReviewItem): { request: ReviewMergeRequest; service: RepositoryProvider; userId: number } {
+    if (this.loading || this.stale) throw new Error('列表正在刷新或显示旧数据，请成功刷新后再操作 MR。');
     if (item.kind !== 'request' || !item.request || !this.activeRequests.has(item) || !this.service || !this.userId) {
       throw new Error('此 MR 列表已失效，请刷新后重新选择。');
     }
@@ -213,22 +220,24 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     if (this.loading) return;
     const generation = ++this.generation;
     const viewName = this.includeAuthored ? '我的待办' : '待我审批';
+    const previousRoots = this.roots;
+    const hadData = this.updatedAt !== undefined;
     this.loading = true;
     this.loaded = false;
-    this.summary = '正在加载...';
-    this.roots = [this.message(`正在加载${viewName}的 MR...`)];
-    this.children.clear();
-    this.clearReview();
+    this.summary = hadData ? '正在更新（保留旧内容）...' : '正在加载...';
+    if (!hadData) this.roots = [this.message(`正在加载${viewName}的 MR...`)];
     this.emitter.fire(undefined);
     try {
       const service = await this.connect(prompt);
       if (generation !== this.generation) return;
       if (!service) {
+        this.children.clear(); this.clearReview(); this.updatedAt = undefined;
         this.roots = [this.message(`请配置 GitLab Token，点击加载${viewName}的 MR`, true)];
         this.summary = '未配置 Token';
         return;
       }
       if (!service.capabilities.todos) {
+        this.children.clear(); this.clearReview(); this.updatedAt = undefined;
         this.roots = [this.message('GitHub 待办、审批与合并尚未接入，请在浏览器查看 PR。')];
         this.summary = 'GitHub 待办尚未接入';
         this.loaded = true;
@@ -243,8 +252,6 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       if (lists.every(result => result.status === 'rejected')) {
         throw new Error(lists.map(result => result.status === 'rejected' ? String(result.reason) : '').join('; '));
       }
-      this.service = service;
-      this.userId = user.id;
       const projects = new Map<number, Promise<ReviewProject>>();
       const states = new Map<number, Promise<ReviewMergeRequest>>();
       const groups = new Map<string, { category: TodoCategory; projectId: number; project?: ReviewProject; items: PendingReviewItem[] }>();
@@ -318,6 +325,12 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
         }));
       }
       if (generation !== this.generation) return;
+      this.children.clear();
+      this.clearReview();
+      this.service = service;
+      this.userId = user.id;
+      this.stale = false;
+      this.updatedAt = new Date().toLocaleTimeString();
       this.roots = [];
       const categoryItems = new Map<TodoCategory, PendingReviewItem[]>();
       for (const category of categories) categoryItems.set(category, []);
@@ -359,8 +372,10 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       if (generation !== this.generation) return;
       const message = error instanceof Error ? error.message : String(error);
       Logger.error(`加载${viewName} MR 失败`, error);
-      this.summary = '加载失败';
-      this.roots = [this.message(`加载失败，点击重试: ${message}`, true)];
+      this.stale = hadData;
+      this.summary = hadData ? `更新失败 · 旧数据 ${this.updatedAt}` : '加载失败';
+      this.roots = hadData ? previousRoots : [this.message(`加载失败，点击重试: ${message}`, true)];
+      if (hadData) this.summary += ` · ${message}`;
       if (prompt) vscode.window.showErrorMessage(`加载${viewName} MR 失败: ${message}`);
     } finally {
       if (generation === this.generation) {
