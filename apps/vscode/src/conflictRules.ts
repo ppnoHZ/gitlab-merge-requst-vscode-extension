@@ -34,3 +34,17 @@ export function conflictResolutionHint(source: string, target: string): string {
   if (source.startsWith('conflict/')) return '请在现有 conflict 分支处理冲突，继续当前 MR';
   return '此场景应在原始源分支合入目标分支、解决冲突后继续原 MR；release → main 由 Tech Leader 处理';
 }
+
+/** Explain why a visible conflict action cannot create a new branch for this MR. */
+export function conflictCreationBlockReason(request: {
+  source_branch: string; target_branch: string; source_project_id?: number; target_project_id?: number;
+}): string | undefined {
+  if (request.source_project_id !== undefined && request.target_project_id !== undefined &&
+    request.source_project_id !== request.target_project_id) {
+    return '跨仓库 MR 暂不支持快速创建 conflict，请在 GitLab 核对源仓库后处理。';
+  }
+  if (!canCreateConflict(request.source_branch, request.target_branch)) {
+    return conflictResolutionHint(request.source_branch, request.target_branch);
+  }
+  return undefined;
+}

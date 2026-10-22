@@ -5,6 +5,7 @@ import * as https from 'https';
 import { URL } from 'url';
 import { GitLabBranchPage, GitLabPage, GitLabUser, MergeRequestPayload, MergeRequestResult, ReviewDetails, ReviewDiffRefs, ReviewDiffVersion, ReviewMergeRequest, ReviewProject } from './types';
 import { Logger } from './logger';
+import { debugLog } from './diagnosticLogging';
 import { ReleaseMergeRequest } from './releaseReadiness';
 import { Audit, AuditApiError, AuditContext } from './audit';
 
@@ -37,7 +38,6 @@ export class GitLabService {
     const sanitized = instanceUrl.replace(/\/+$/, '');
     this.baseUrl = `${sanitized}/api/v4`;
     this.token = token;
-    Logger.info(`GitLabService 初始化完成，API Endpoint: ${this.baseUrl}`);
   }
 
   /**
@@ -50,11 +50,6 @@ export class GitLabService {
     const urlObj = new URL(fullUrl);
     const isHttps = urlObj.protocol === 'https:';
     const method = options.method || 'GET';
-
-    Logger.info(`[GitLab API 发送] ${method} ${fullUrl}`);
-    if (options.body) {
-      Logger.info(`[GitLab API 请求参数]`, options.body);
-    }
 
     let response;
     try {
@@ -75,8 +70,8 @@ export class GitLabService {
         validateStatus: () => true
       });
     } catch (error) {
-      Logger.error(`[GitLab 网络错误] 无法连接到 ${fullUrl}`, error);
       const message = error instanceof Error ? error.message : String(error);
+      debugLog(`[GitLab 网络错误] ${method} ${path}: ${message}`);
       throw new AuditApiError(`连接 GitLab 失败: ${message}`);
     }
 
@@ -84,12 +79,9 @@ export class GitLabService {
       ? response.data
       : JSON.stringify(response.data ?? '');
     const status = response.status;
-    Logger.info(
-      `[GitLab API 响应] status=${status}, content-type=${response.headers['content-type'] ?? 'unknown'}, content-length=${response.headers['content-length'] ?? 'unknown'}, body-bytes=${Buffer.byteLength(responseBody, 'utf8')}`
-    );
+    debugLog(`[GitLab API] ${status} ${method} ${path}`);
 
     if (status >= 200 && status < 300) {
-      Logger.info(`[GitLab API 成功 ${status}] ${method} ${path}`);
       if (method === 'DELETE' && status === 204) {
         return;
       }
@@ -114,8 +106,8 @@ export class GitLabService {
     } catch {
       errorMsg += `: ${responseBody}`;
     }
-    Logger.error(`[GitLab API 失败 ${status}] ${method} ${path}\n响应体: ${responseBody}`);
-    throw new AuditApiError(errorMsg, status);
+    // Expected 404 probes and handled failures must not be logged twice. The caller reports actionable failures.
+    throw new AuditApiError(errorMsg.length > 500 ? `${errorMsg.slice(0, 500)}…` : errorMsg, status);
   }
 
   /**
@@ -318,7 +310,7 @@ export class GitLabService {
         Number.isSafeInteger(project.id) && project.id > 0
       );
       if (match) {
-        Logger.info(`通过项目搜索获取项目 ID: ${match.id}`);
+        debugLog(`通过项目搜索获取项目 ID: ${match.id}`);
         return match;
       }
       throw new Error(`搜索结果中没有路径完全匹配的可见项目: ${projectPath}`);
@@ -411,7 +403,7 @@ export class GitLabService {
       !commit.authorName || !commit.committedDate || !Number.isFinite(Date.parse(commit.committedDate))
     );
     if (incomplete.length > 0) {
-      Logger.warn(`GitLab 分支最新提交信息缺失或无效: ${incomplete.map(commit => commit.branch).join(', ')}`);
+      debugLog(`GitLab 分支最新提交信息缺失或无效: ${incomplete.map(commit => commit.branch).join(', ')}`);
     }
     return { items: branches.map(branch => branch.name), hasMore: branches.length === 100, latestCommits };
   }
@@ -474,7 +466,7 @@ export class GitLabService {
     const trimmed = username.trim().replace(/^@/, '').trim();
     const users = await this.request<GitLabUser[]>(`/users?username=${encodeURIComponent(trimmed)}`);
     const match = users.find(u => u.username.toLowerCase() === trimmed.toLowerCase());
-    Logger.info('[Reviewer 账号解析]', {
+    debugLog('[Reviewer 账号解析]', {
       username: trimmed,
       candidates: users.map(user => ({ id: user.id, username: user.username, state: user.state })),
       matchedId: match?.id
@@ -534,7 +526,7 @@ export class GitLabService {
       body.reviewer_ids = payload.reviewerIds;
     }
 
-    Logger.info('[Reviewer 创建请求]', {
+    debugLog('[Reviewer 创建请求]', {
       projectId: payload.projectId,
       sourceBranch: payload.sourceBranch,
       targetBranch: payload.targetBranch,
@@ -554,7 +546,7 @@ export class GitLabService {
       }
       return result;
     }, result => ({ mr: result.iid }));
-    Logger.info('[Reviewer 创建响应]', {
+    debugLog('[Reviewer 创建响应]', {
       iid: mr.iid,
       web_url: mr.web_url,
       reviewersFieldPresent: Array.isArray(mr.reviewers),

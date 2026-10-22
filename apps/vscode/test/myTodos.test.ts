@@ -5,7 +5,7 @@ import { GitLabService } from '../src/gitlabService';
 import { PendingReviewsProvider, PendingReviewItem } from '../src/pendingReviewsView';
 import { AuditApiError } from '../src/audit';
 import { ReviewMergeRequest, ReviewDetails } from '../src/types';
-import { warningDialog, openedDocuments, ThemeIcon } from './vscodeMock';
+import { warningDialog, openedDocuments, ThemeIcon, window, informationMessages } from './vscodeMock';
 
 const sourceSha = 'b'.repeat(40);
 const targetSha = 'a'.repeat(40);
@@ -99,6 +99,27 @@ async function run() {
   assert.match(String(mine.find(item => item.request?.iid === 6)!.description), /合并状态计算中/);
   assert.equal((mine.find(item => item.request?.iid === 1)!.iconPath as ThemeIcon).color, undefined);
   assert.equal(provider.getParent(conflict)?.kind, 'project');
+  const action = provider.getChildren(conflict)[0];
+  assert.equal(action.kind, 'action');
+  assert.equal(action.label, '创建 conflict 分支…');
+  assert.equal(action.command?.command, 'gitlabMr.createConflictFromMergeRequest');
+  assert.equal(action.command?.arguments?.[0], conflict);
+  assert.equal(provider.getParent(action), conflict);
+  assert.match(String(provider.getChildren(unsupported)[0].label), /查看冲突处理方式/);
+  assert.equal(await provider.createConflict(unsupported), false);
+  assert.match(informationMessages.at(-1) ?? '', /原始源分支/);
+  assert.equal(await provider.createConflict(mine.find(item => item.request?.iid === 7)!), false);
+  assert.match(informationMessages.at(-1) ?? '', /跨仓库/);
+  const pick = window.showQuickPick;
+  try {
+    window.showQuickPick = async (items: any[]) => {
+      assert.equal(items.filter(item => item.label === '!3 MR 3').length, 1);
+      return items.find(item => item.label === '!3 MR 3');
+    };
+    assert.equal((await provider.pickConflictedRequest())?.request?.iid, 3);
+    window.showQuickPick = async () => undefined;
+    assert.equal(await provider.pickConflictedRequest(), undefined);
+  } finally { window.showQuickPick = pick; }
   await assert.rejects(provider.approve(conflict), /待我审批/);
 
   // All creation reads/writes use the MR project (42), never the workspace's origin project.
@@ -174,7 +195,17 @@ async function run() {
   provider.dispose();
   const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
   assert.equal(manifest.contributes.views['gitlabMr-releaseReadinessContainer'].find((item: any) => item.id === 'gitlabMr.pendingReviews').name, '我的待办');
-  assert(manifest.contributes.menus['view/item/context'].some((item: any) => item.command === 'gitlabMr.createConflictFromMergeRequest' && item.when.includes('canCreateConflict')));
+  const conflictMenus = manifest.contributes.menus['view/item/context'].filter((item: any) => item.command === 'gitlabMr.createConflictFromMergeRequest');
+  for (const menu of conflictMenus) {
+    assert(menu.when.includes('view == gitlabMr.pendingReviews'));
+    const expression = menu.when.split('viewItem =~ ')[1];
+    const pattern = new RegExp(expression.slice(1, -1));
+    // All red MR contexts have an entry, even when the creation policy rejects that direction.
+    for (const context of ['authoredMergeRequest-conflict', 'pendingReviewRequest-conflict-canCreateConflict']) assert(pattern.test(context));
+    assert.equal(pattern.test('file'), false);
+    if (menu.group === 'conflict') assert(pattern.test('authoredMergeRequest')); // Also accessible if GitLab has not reported conflict status yet.
+  }
+  assert(!manifest.contributes.menus.commandPalette.some((item: any) => item.command === 'gitlabMr.createConflictFromMergeRequest' && item.when === 'false'));
   console.log('[PASS] my todos: authored pagination, role groups, red conflict icons, partial failures, stale lists, MR-bound project/source/target creation, confirmation rechecks and fork rejection');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

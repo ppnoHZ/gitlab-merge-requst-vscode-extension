@@ -3,14 +3,14 @@ import { GitLabService } from './gitlabService';
 import { Logger } from './logger';
 import { ReviewMergeRequest, ReviewProject } from './types';
 import { MergeRequestReview, ReviewFile } from './mergeRequestReview';
-import { hasMergeConflicts, canCreateConflict, conflictResolutionHint } from './conflictRules';
+import { hasMergeConflicts, conflictCreationBlockReason, conflictResolutionHint } from './conflictRules';
 import { createConflictFromMergeRequest } from './conflictWorkflow';
 
 type TodoCategory = 'review' | 'authored';
 
 export class PendingReviewItem extends vscode.TreeItem {
   constructor(
-    readonly kind: 'category' | 'project' | 'request' | 'file' | 'message',
+    readonly kind: 'category' | 'project' | 'request' | 'file' | 'message' | 'action',
     label: string,
     collapsibleState = vscode.TreeItemCollapsibleState.None,
     readonly project?: ReviewProject,
@@ -47,11 +47,20 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   }
 
   getChildren(parent?: PendingReviewItem): PendingReviewItem[] {
-    const children = parent?.kind === 'request'
+    let children = parent?.kind === 'request'
       ? this.files.get(parent) ?? [this.changesMessage(parent, '点击加载变更文件')]
       : (parent?.kind === 'project' || parent?.kind === 'category') && parent.id !== undefined
         ? this.children.get(parent.id) ?? []
         : parent ? [] : this.roots;
+    if (parent?.kind === 'request' && parent.request && hasMergeConflicts(parent.request)) {
+      const reason = conflictCreationBlockReason(parent.request);
+      const action = new PendingReviewItem('action', reason ? '查看冲突处理方式（此场景不创建 conflict）' : '创建 conflict 分支…');
+      action.id = `${parent.id}:conflict-action`;
+      action.iconPath = new vscode.ThemeIcon(reason ? 'info' : 'git-branch');
+      action.tooltip = reason ?? `从 ${parent.request.target_branch} 创建 conflict/${parent.request.source_branch}`;
+      action.command = { command: 'gitlabMr.createConflictFromMergeRequest', title: '处理冲突 / 创建 conflict 分支', arguments: [parent] };
+      children = [action, ...children];
+    }
     for (const child of children) {
       this.parents.set(child, parent);
     }
@@ -162,8 +171,32 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     return this.review.merge(request, service, userId);
   }
 
+  async pickConflictedRequest(): Promise<PendingReviewItem | undefined> {
+    const requests = new Map<string, PendingReviewItem>();
+    for (const item of this.activeRequests) {
+      if (item.request && hasMergeConflicts(item.request)) requests.set(`${item.request.project_id}:${item.request.iid}`, item);
+    }
+    if (!requests.size) {
+      vscode.window.showInformationMessage('当前待办中没有已确认有冲突的 MR；若 GitLab 状态仍在计算，请刷新后重试。');
+      return undefined;
+    }
+    const picked = await vscode.window.showQuickPick([...requests.values()].map(item => ({
+      label: `!${item.request!.iid} ${item.request!.title}`,
+      description: item.project?.path_with_namespace,
+      detail: `${item.request!.source_branch} → ${item.request!.target_branch} · ${conflictCreationBlockReason(item.request!) ?? '可创建 conflict 分支'}`,
+      item
+    })), { title: '选择有冲突的待办 MR', ignoreFocusOut: true });
+    return picked?.item;
+  }
+
   async createConflict(item: PendingReviewItem): Promise<boolean> {
     const { request, service } = this.requireRequest(item);
+    const reason = conflictCreationBlockReason(request);
+    if (reason) {
+      const action = await vscode.window.showInformationMessage(`MR !${request.iid}：${request.source_branch} → ${request.target_branch}\n${reason}`, '打开 MR');
+      if (action === '打开 MR') await vscode.env.openExternal(vscode.Uri.parse(request.web_url));
+      return false;
+    }
     return createConflictFromMergeRequest(service, request, () => { this.requireRequest(item); });
   }
 
@@ -250,8 +283,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
             const currentGroup = group();
             currentGroup.project = project;
             const conflicted = hasMergeConflicts(request);
-            const canCreate = conflicted && canCreateConflict(request.source_branch, request.target_branch) &&
-              (request.source_project_id === undefined || request.target_project_id === undefined || request.source_project_id === request.target_project_id);
+            const canCreate = conflicted && !conflictCreationBlockReason(request);
             const item = new PendingReviewItem('request', `!${request.iid} ${request.title}`,
               vscode.TreeItemCollapsibleState.Collapsed, project, request, project.id, undefined, category);
             item.id = `${category === 'review' ? 'pending-review' : 'authored-mr'}:${project.id}:${request.iid}`;
@@ -263,8 +295,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
               : request.has_conflicts === undefined && request.detailed_merge_status === undefined ? '冲突状态未知' : undefined;
             item.description = [status, `${request.source_branch} → ${request.target_branch}`, `提交人: ${author}${username}`, request.draft ? '草稿' : undefined].filter(Boolean).join(' · ');
             const role = category === 'authored' ? '我提交的开放 MR' : '指定我为 Reviewer，尚未批准';
-            const fork = request.source_project_id !== undefined && request.target_project_id !== undefined && request.source_project_id !== request.target_project_id;
-            const hint = conflicted ? `\n有代码冲突：${fork ? '跨仓库 MR 暂不支持快速创建 conflict，请在 GitLab 核对源仓库后处理' : conflictResolutionHint(request.source_branch, request.target_branch)}` : status ? `\n${status}，请刷新重试` : '';
+            const hint = conflicted ? `\n有代码冲突：${conflictCreationBlockReason(request) ?? conflictResolutionHint(request.source_branch, request.target_branch)}` : status ? `\n${status}，请刷新重试` : '';
             item.tooltip = `${request.title}\n${project.path_with_namespace}\nMR: !${request.iid} · ID: ${request.id}\n${request.source_branch} → ${request.target_branch}\nSource: ${request.source_branch}\nTarget: ${request.target_branch}\n提交人: ${author}${username}\n${role}${hint}`;
             item.iconPath = conflicted ? new vscode.ThemeIcon('git-pull-request', new vscode.ThemeColor('errorForeground')) : new vscode.ThemeIcon('git-pull-request');
             item.command = { command: 'gitlabMr.showPendingReviewChanges', title: '查看 MR 变更文件', arguments: [item] };

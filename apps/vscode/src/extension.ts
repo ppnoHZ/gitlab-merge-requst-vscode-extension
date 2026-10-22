@@ -7,6 +7,7 @@ import { GitLabService } from './gitlabService';
 import { TemplateEngine } from './templateEngine';
 import { TokenManager } from './tokenManager';
 import { Logger } from './logger';
+import { debugLog } from './diagnosticLogging';
 import { getReleaseFeatureStatuses, getReleaseVersion } from './releaseReadiness';
 import { commonBranchFilters, upgradeDefaultBranchFilters, ReleaseReadinessProvider, ReleaseReadinessTreeItem } from './releaseReadinessView';
 import { ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
@@ -196,7 +197,12 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   const createConflictFromMrCmd = registerCommand('gitlabMr.createConflictFromMergeRequest', (item?: PendingReviewItem) =>
     runReviewAction('从 MR 创建 conflict 分支失败', async () => {
-      if (!item) throw new Error('请选择有冲突的 MR。');
+      if (!item) {
+        if (!pendingReviews.loaded) await refreshPendingReviews();
+        if (!pendingReviews.loaded) return;
+        item = await pendingReviews.pickConflictedRequest();
+      }
+      if (!item) return;
       if (await pendingReviews.createConflict(item)) {
         await refreshPendingReviews(false);
         overview.invalidate();
@@ -367,12 +373,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 1. 打开可视化设置面板
   const openSettingsCmd = registerCommand('gitlabMr.openSettings', () => {
-    Logger.info('打开 GitLab MR 设置面板');
+    debugLog('打开 GitLab MR 设置面板');
     vscode.commands.executeCommand('workbench.action.openSettings', '@id:gitlabMr.');
   });
 
   const configureInstanceUrlCmd = registerCommand('gitlabMr.configureInstanceUrl', () => {
-    Logger.info('打开 GitLab 实例地址设置项');
+    debugLog('打开 GitLab 实例地址设置项');
     vscode.commands.executeCommand('workbench.action.openSettings', '@id:gitlabMr.instanceUrl');
   });
 
@@ -383,7 +389,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // 3. 注册设置 Token 命令
   const setTokenCmd = registerCommand('gitlabMr.setToken', async () => {
-    Logger.info('触发设置 Token 操作');
+    debugLog('触发设置 Token 操作');
     await tokenManager.promptForToken();
   });
 
@@ -743,7 +749,7 @@ async function createMergeRequestAudited(
   tokenManager: Pick<TokenManager, 'getToken' | 'promptForToken'>,
   presetBranches?: { sourceBranch: string; targetBranch?: string }
 ) {
-  Logger.info('===== 开始执行创建 Merge Request 流程 =====');
+  debugLog('===== 开始执行创建 Merge Request 流程 =====');
 
   // 1. 获取工作区目录
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -754,7 +760,7 @@ async function createMergeRequestAudited(
     return false;
   }
   const rootPath = workspaceFolders[0].uri.fsPath;
-  Logger.info(`当前工作区路径: ${rootPath}`);
+  debugLog(`当前工作区路径: ${rootPath}`);
   const gitService = new GitService(rootPath);
 
   // 2. 检查 Git 仓库状态
@@ -768,7 +774,7 @@ async function createMergeRequestAudited(
 
   const repoInfo = await gitService.getRepoInfo();
   const currentBranch = repoInfo.sourceBranch;
-  Logger.info(`检测到当前分支: ${currentBranch}, 远程仓库 URL: ${repoInfo.remoteUrl}, 解析项目路径: ${repoInfo.projectPath}`);
+  debugLog(`检测到当前分支: ${currentBranch}, 远程仓库 URL: ${repoInfo.remoteUrl}, 解析项目路径: ${repoInfo.projectPath}`);
 
   // 3. 读取配置项
   const config = vscode.workspace.getConfiguration('gitlabMr', workspaceFolders[0].uri);
@@ -781,7 +787,7 @@ async function createMergeRequestAudited(
   );
   const defaultReviewers = config.get<string[]>('defaultReviewers', []);
   const reviewerConfig = config.inspect<string[]>('defaultReviewers');
-  Logger.info('[Reviewer 配置] gitlabMr.defaultReviewers', {
+  debugLog('[Reviewer 配置] gitlabMr.defaultReviewers', {
     effective: defaultReviewers,
     default: reviewerConfig?.defaultValue,
     user: reviewerConfig?.globalValue,
@@ -805,9 +811,9 @@ async function createMergeRequestAudited(
     repoInfo.gitlabHost !== 'gitlab.com'
   ) {
     instanceUrl = `https://${repoInfo.gitlabHost}`;
-    Logger.info(`已自动从 remote origin 探测到私有 GitLab 实例地址: ${instanceUrl}`);
+    debugLog(`已自动从 remote origin 探测到私有 GitLab 实例地址: ${instanceUrl}`);
   } else {
-    Logger.info(`使用 GitLab 实例地址: ${instanceUrl}`);
+    debugLog(`使用 GitLab 实例地址: ${instanceUrl}`);
   }
 
   // 4. 获取 Access Token
@@ -826,7 +832,7 @@ async function createMergeRequestAudited(
       token = await tokenManager.promptForToken();
     }
     if (!token) {
-      Logger.warn('用户取消了 Token 输入');
+      debugLog('用户取消了 Token 输入');
       return false;
     }
   }
@@ -838,7 +844,7 @@ async function createMergeRequestAudited(
     if (!branches.includes(currentBranch)) {
       branches.unshift(currentBranch);
     }
-    Logger.info(`检测到本地及远程分支: ${branches.join(', ')}`);
+    debugLog(`检测到本地及远程分支: ${branches.join(', ')}`);
   }
 
   const sourceBranch = presetBranches?.sourceBranch ?? await selectBranch(
@@ -848,10 +854,10 @@ async function createMergeRequestAudited(
     '选择源分支'
   );
   if (!sourceBranch) {
-    Logger.info('用户取消了选择源分支');
+    debugLog('用户取消了选择源分支');
     return false;
   }
-  Logger.info(`用户选择 MR 源分支: ${sourceBranch}`);
+  debugLog(`用户选择 MR 源分支: ${sourceBranch}`);
 
   // 6. 选择目标分支 (Target Branch)
 
@@ -879,16 +885,16 @@ async function createMergeRequestAudited(
   }))?.label;
 
   if (!selectedTarget) {
-    Logger.info('用户取消了选择目标分支');
+    debugLog('用户取消了选择目标分支');
     return false;
   }
   ({ removeSourceBranch, squash } = conflictMergeOptions(sourceBranch, { removeSourceBranch, squash }));
-  Logger.info(`用户选择合并目标分支: ${selectedTarget}`);
+  debugLog(`用户选择合并目标分支: ${selectedTarget}`);
 
   // 7. 收集 Commit 历史和变更文件
   const commits = await gitService.getCommitsBetween(sourceBranch, selectedTarget);
   const changedFiles = await gitService.getChangedFiles(sourceBranch, selectedTarget);
-  Logger.info(`比对结果: 包含 ${commits.length} 个 Commits, ${changedFiles.length} 个变动文件`);
+  debugLog(`比对结果: 包含 ${commits.length} 个 Commits, ${changedFiles.length} 个变动文件`);
 
   // 8. 生成 Title & Description
   const defaultTitle = TemplateEngine.generateTitle(
@@ -903,7 +909,7 @@ async function createMergeRequestAudited(
     commits,
     changedFiles
   );
-  Logger.info(`自动生成的 MR Title: "${defaultTitle}"`);
+  debugLog(`自动生成的 MR Title: "${defaultTitle}"`);
 
   // 9. 允许用户预览或修改 Title（按回车直接使用自动生成的 Title）
   let promptText = '基于分支规范自动生成，支持直接回车确认或进行微调';
@@ -923,12 +929,12 @@ async function createMergeRequestAudited(
   });
 
   if (!finalTitle) {
-    Logger.info('用户取消了标题确认');
+    debugLog('用户取消了标题确认');
     return false;
   }
   await Audit.note('confirmed', { instance: instanceUrl, project: repoInfo.projectPath,
     sourceBranch, targetBranch: selectedTarget, removeSourceBranch, squash });
-  Logger.info(`最终确认的 MR Title: "${finalTitle.trim()}"`);
+  debugLog(`最终确认的 MR Title: "${finalTitle.trim()}"`);
 
   // 10. 弹出进度条并在后台执行 GitLab API 请求
   await vscode.window.withProgress(
@@ -948,7 +954,7 @@ async function createMergeRequestAudited(
         const project = await gitlabService.getProject(repoInfo.projectPath);
         if (project && project.id) {
           projectId = project.id;
-          Logger.info(`根据路径 ${repoInfo.projectPath} 成功获取项目 ID: ${projectId}`);
+          debugLog(`根据路径 ${repoInfo.projectPath} 成功获取项目 ID: ${projectId}`);
         }
       } catch (err: any) {
         Logger.warn(`按路径查询项目失败，尝试直接使用 URL 编码路径: ${repoInfo.projectPath}`, err.message);
@@ -958,12 +964,12 @@ async function createMergeRequestAudited(
       let reviewerIds: number[] = [];
       if (defaultReviewers && defaultReviewers.length > 0) {
         progress.report({ message: '正在匹配 Reviewer 账号...' });
-        Logger.info(`配置中的 Reviewer 用户名: ${defaultReviewers.join(', ')}`);
+        debugLog(`配置中的 Reviewer 用户名: ${defaultReviewers.join(', ')}`);
         const { resolvedIds, notFoundUsers } = await gitlabService.resolveReviewerIds(
           defaultReviewers
         );
         reviewerIds = resolvedIds;
-        Logger.info(`成功匹配到 Reviewer IDs: ${reviewerIds.join(', ')}`);
+        debugLog(`成功匹配到 Reviewer IDs: ${reviewerIds.join(', ')}`);
         if (notFoundUsers.length > 0) {
           Logger.warn(`未匹配到的 Reviewer 用户: ${notFoundUsers.join(', ')}`);
           throw new Error(
@@ -1133,9 +1139,9 @@ export async function handleCheckReleaseReadiness(
     if (loadingBranches && branchState.page === 0) {
       try {
         const gitlabVersion = await gitlabService.getGitLabVersion();
-        Logger.info(`GitLab 实例软件版本: ${gitlabVersion.version}${gitlabVersion.revision ? ` (${gitlabVersion.revision})` : ''}`);
+        debugLog(`GitLab 实例软件版本: ${gitlabVersion.version}${gitlabVersion.revision ? ` (${gitlabVersion.revision})` : ''}`);
       } catch (error: any) {
-        Logger.warn('无法读取 GitLab 实例软件版本（该接口可能受权限限制）', error.message);
+        debugLog('无法读取 GitLab 实例软件版本（该接口可能受权限限制）', error.message);
       }
     }
     let projectId: number | undefined;
@@ -1270,7 +1276,7 @@ export async function handleCheckReleaseReadiness(
       await revealResults();
       return;
     }
-    Logger.info(`选择上线分支: ${releaseBranch}, 版本: ${version}`);
+    debugLog(`选择上线分支: ${releaseBranch}, 版本: ${version}`);
     provider.releaseBranch = releaseBranch;
 
     const state = releaseState ?? provider.startReleasePages(releaseBranch);

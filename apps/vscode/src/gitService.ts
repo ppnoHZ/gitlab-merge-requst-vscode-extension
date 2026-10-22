@@ -2,7 +2,7 @@ import { execFile } from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { GitCommitInfo, GitRepoInfo, MainMergeResult } from './types';
-import { Logger } from './logger';
+import { debugLog } from './diagnosticLogging';
 
 export type { MainMergeResult } from './types';
 
@@ -14,15 +14,15 @@ export class GitService {
 
   private runGit(args: string[], mergeConflictExpected = false): Promise<string> {
     return new Promise((resolve, reject) => {
-      Logger.info(`[执行 Git 命令] git ${args.join(' ')} (cwd: ${this.workspaceRoot})`);
+      debugLog(`[执行 Git 命令] git ${args.join(' ')} (cwd: ${this.workspaceRoot})`);
       execFile('git', args, { cwd: this.workspaceRoot, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
           if (mergeConflictExpected && error.code === 1) {
-            Logger.info('[main 合并检查] 存在合并冲突，不标记为已合入 main');
+            debugLog('[main 合并检查] 存在合并冲突，不标记为已合入 main');
             return resolve('');
           }
           const errMsg = stderr.trim() || error.message;
-          Logger.warn(`[Git 命令返回异常] git ${args.join(' ')}: ${errMsg}`);
+          debugLog(`[Git 命令返回异常] git ${args.join(' ')}: ${errMsg}`);
           return reject(new Error(errMsg));
         }
         resolve(stdout.trim());

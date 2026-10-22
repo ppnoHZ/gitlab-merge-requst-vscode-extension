@@ -281,7 +281,7 @@
       },
       {
         "command": "gitlabMr.createConflictFromMergeRequest",
-        "title": "从此 MR 创建 conflict 分支",
+        "title": "处理冲突 / 创建 conflict 分支",
         "category": "GitLab MR",
         "icon": "$(git-branch)"
       }
@@ -389,6 +389,12 @@
           "default": true,
           "description": "MR 创建成功后是否自动在浏览器中打开对应页面",
           "order": 9
+        },
+        "gitlabMr.verboseLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启详细诊断日志（API 请求状态、Git 命令、分支与界面诊断）。默认关闭，仅保留关键操作结果和需要处理的警告、错误。",
+          "order": 12
         }
       }
     },
@@ -484,10 +490,6 @@
         },
         {
           "command": "gitlabMr.mergePendingReview",
-          "when": "false"
-        },
-        {
-          "command": "gitlabMr.createConflictFromMergeRequest",
           "when": "false"
         }
       ],
@@ -658,12 +660,12 @@
         },
         {
           "command": "gitlabMr.createConflictFromMergeRequest",
-          "when": "view == gitlabMr.pendingReviews && viewItem =~ /-canCreateConflict$/",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^(pendingReviewRequest|authoredMergeRequest)-conflict/",
           "group": "inline@0"
         },
         {
           "command": "gitlabMr.createConflictFromMergeRequest",
-          "when": "view == gitlabMr.pendingReviews && viewItem =~ /-canCreateConflict$/",
+          "when": "view == gitlabMr.pendingReviews && viewItem =~ /^(pendingReviewRequest|authoredMergeRequest)/",
           "group": "conflict"
         }
       ]
@@ -677,7 +679,7 @@
     "package:vsix": "pnpm run test:publish && pnpm run compile && pnpm --package=@vscode/vsce@4.0.0 dlx vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
     "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/diagnosticLogging.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/diagnosticLogging.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation",
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",

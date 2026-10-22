@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { getReleaseFeatureStatuses, ReleaseFeatureState, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { BranchLatestCommit, GitLabBranchPage, GitLabPage } from './types';
 import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
-import { Logger } from './logger';
+import { debugLog } from './diagnosticLogging';
 import { WorkbenchFilters, MainFilter, normalizeFilters, matchesUpdated, hasFilters, filterDescription } from './workbenchFilters';
 
 type ReleaseTreeItemKind = 'search' | 'loadMore' | 'directory' | 'branch' | 'feature' | 'issueLink' | 'message';
@@ -551,12 +551,12 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     const configurations = vscode.workspace
       .getConfiguration('gitlabMr')
       .get<IssueLinkConfig[]>('issueLinks', []);
-    Logger.info(
+    debugLog(
       `[上线检查工单规则] ${JSON.stringify(configurations.map(configuration => ({ name: configuration.name, pattern: configuration.pattern })))}`
     );
     for (const status of statuses) {
       const links = resolveFeatureIssueLinks(status.branch, configurations);
-      Logger.info(
+      debugLog(
         `[上线检查工单链接] ${status.branch}: ${links.length ? links.map(link => `${link.name}=${link.id}`).join(', ') : '未匹配配置'}`
       );
     }
