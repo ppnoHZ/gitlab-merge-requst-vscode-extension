@@ -150,7 +150,8 @@ export async function createConflictFromPlan(
 }
 
 export async function createConflictFromMergeRequest(
-  service: RepositoryProvider, request: ReviewMergeRequest, requireActive: () => void
+  service: RepositoryProvider, request: ReviewMergeRequest, requireActive: () => void,
+  start?: (service: RepositoryProvider, plan: ConflictPlan, project: { id: number; label: string; webUrl: string }, reviewers: number[]) => Promise<boolean>
 ): Promise<boolean> {
   requireActive();
   const check = (current: ReviewDetails) => {
@@ -182,6 +183,7 @@ export async function createConflictFromMergeRequest(
     source, target, branch: conflictBranchName(source.name),
     originalMr: { iid: details.iid, webUrl: details.web_url }
   };
+  if (start) return start(service, plan, { id: project.id, label: project.path_with_namespace, webUrl: project.web_url }, details.reviewers.map(user => user.id));
   return createConflictFromPlan(service, { id: project.id, label: project.path_with_namespace, webUrl: project.web_url }, plan, async () => {
     requireActive();
     const current = await service.getReviewDetails(request.project_id, request.iid, true);

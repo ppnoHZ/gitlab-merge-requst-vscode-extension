@@ -1,5 +1,7 @@
 # VS Code 分支治理功能规划
 
+> 更新：GitLab 的可恢复 conflict 向导及审批状态栏已实现，操作流程、恢复方式与边界见 [conflict 处理向导](vscode-conflict-workflow.md)。以下保留前期规划背景。
+
 依据：[代码仓库与分支规范](代码仓库与分支规范.md)。本文件区分本次实现与后续规划；后续项目不代表已交付。
 
 ## 本次实现：release / hotfix 的 conflict 创建与处理引导

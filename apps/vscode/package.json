@@ -55,7 +55,9 @@
     "onCommand:gitlabMr.createReleaseBranch",
     "onCommand:gitlabMr.createHotfixBranch",
     "onCommand:gitlabMr.createConflictBranch",
-    "onCommand:gitlabMr.createConflictFromMergeRequest"
+    "onCommand:gitlabMr.createConflictFromMergeRequest",
+    "onCommand:gitlabMr.continueConflict",
+    "onCommand:gitlabMr.showApprovalInbox"
   ],
   "contributes": {
     "commands": [
@@ -284,6 +286,17 @@
         "title": "处理冲突 / 创建 conflict 分支",
         "category": "GitLab MR",
         "icon": "$(git-branch)"
+      },
+      {
+        "command": "gitlabMr.continueConflict",
+        "title": "继续 conflict 处理（解决、推送、创建替代 MR）",
+        "category": "GitLab MR",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "gitlabMr.showApprovalInbox",
+        "title": "查看待我审批的 MR",
+        "category": "GitLab MR"
       }
     ],
     "configuration": {
@@ -413,6 +426,13 @@
           "default": "",
           "description": "可选的 GitHub API 地址。默认 github.com 使用 https://api.github.com，Enterprise 使用实例地址加 /api/v3。",
           "order": 2
+        },
+        "gitlabMr.approvalRefreshSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 30,
+          "maximum": 600,
+          "description": "状态栏待审批 MR 数量的静默刷新间隔（秒），不会重置正在查看的 MR 差异。"
         }
       }
     },
@@ -588,6 +608,11 @@
           "command": "gitlabMr.createRemoteBranch",
           "when": "view == gitlabMr.releaseReadiness",
           "group": "navigation@0"
+        },
+        {
+          "command": "gitlabMr.continueConflict",
+          "when": "view == gitlabMr.pendingReviews",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -695,14 +720,15 @@
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "pnpm run test:publish && pnpm run compile && pnpm --package=@vscode/vsce@4.0.0 dlx vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
-    "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation && pnpm run test:providers",
+    "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation && pnpm run test:providers && pnpm run test:conflict-session",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/diagnosticLogging.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/diagnosticLogging.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation && pnpm run test:providers",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/diagnosticLogging.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/diagnosticLogging.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation && pnpm run test:providers && pnpm run test:conflict-session",
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",
     "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js",
-    "test:providers": "esbuild ./test/providers.test.ts --bundle --outfile=dist/providers.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/providers.test.js"
+    "test:providers": "esbuild ./test/providers.test.ts --bundle --outfile=dist/providers.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/providers.test.js",
+    "test:conflict-session": "esbuild ./test/conflictSession.test.ts ./test/conflictApi.test.ts ./test/reviewStatus.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/conflictSession.test.js && node dist/conflictApi.test.js && node dist/reviewStatus.test.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0"

@@ -189,7 +189,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     return picked?.item;
   }
 
-  async createConflict(item: PendingReviewItem): Promise<boolean> {
+  async createConflict(item: PendingReviewItem, start?: Parameters<typeof createConflictFromMergeRequest>[3]): Promise<boolean> {
     const { request, service } = this.requireRequest(item);
     const reason = conflictCreationBlockReason(request);
     if (reason) {
@@ -197,7 +197,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       if (action === '打开 MR') await vscode.env.openExternal(vscode.Uri.parse(request.web_url));
       return false;
     }
-    return createConflictFromMergeRequest(service, request, () => { this.requireRequest(item); });
+    return createConflictFromMergeRequest(service, request, () => { this.requireRequest(item); }, start);
   }
 
   private message(label: string, retry = false): PendingReviewItem {
@@ -353,7 +353,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
         : `${counts.review} 个待审批 · ${groups.size} 个项目${failed ? ` · ${failed} 个查询失败` : ''}`;
       if (failed) {
         this.roots.unshift(this.message('部分 MR 查询失败，点击重试；结果不完整', true));
-        vscode.window.showWarningMessage(`${viewName}列表部分查询失败，无法确认的 MR 不计入数量，请刷新重试。`);
+        if (prompt) vscode.window.showWarningMessage(`${viewName}列表部分查询失败，无法确认的 MR 不计入数量，请刷新重试。`);
       } else if (!this.includeAuthored && !counts.review) this.roots = [this.message('当前没有指定你为 Reviewer 且尚未批准的开放 MR')];
     } catch (error) {
       if (generation !== this.generation) return;
@@ -361,7 +361,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       Logger.error(`加载${viewName} MR 失败`, error);
       this.summary = '加载失败';
       this.roots = [this.message(`加载失败，点击重试: ${message}`, true)];
-      vscode.window.showErrorMessage(`加载${viewName} MR 失败: ${message}`);
+      if (prompt) vscode.window.showErrorMessage(`加载${viewName} MR 失败: ${message}`);
     } finally {
       if (generation === this.generation) {
         this.loading = false;

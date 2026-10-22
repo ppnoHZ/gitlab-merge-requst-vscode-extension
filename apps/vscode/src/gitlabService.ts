@@ -200,6 +200,39 @@ export class GitLabService implements RepositoryProvider {
     return details;
   }
 
+  async cleanupConflictBranch(project: number, branch: string, target: string, iid: number, expectedSha: string): Promise<void> {
+    if (!branch.startsWith('conflict/') || !/^[a-f0-9]{40,64}$/i.test(expectedSha)) throw new Error('无效的 conflict 清理任务。');
+    const mr = await this.getReviewDetails(project, iid);
+    if (mr.state !== 'merged' || mr.source_branch !== branch || mr.target_branch !== target || mr.sha !== expectedSha) throw new Error('替代 MR 尚未合并到原 Target，或版本不匹配。');
+    const branchPath = `/projects/${project}/repository/branches/${encodeURIComponent(branch)}`;
+    const check = async () => {
+      try {
+        const ref = await this.request<{ name: string; protected: boolean; default: boolean; commit: { id: string } }>(branchPath);
+        if (ref.name !== branch || ref.protected !== false || ref.default !== false || ref.commit?.id !== expectedSha) throw new Error('分支已变化、受保护或是默认分支，禁止清理。');
+        return true;
+      } catch (error) { if (error instanceof AuditApiError && error.status === 404) return false; throw error; }
+    };
+    if (!await check()) return;
+    const open = await this.getAllPages<ReviewMergeRequest>(`/projects/${project}/merge_requests?state=opened&source_branch=${encodeURIComponent(branch)}`);
+    if (open.length) throw new Error('该 conflict 分支仍有关联的开放 MR，禁止清理。');
+    await Audit.sensitive('conflict.cleanup', 'high', { ...this.auditContext, project, branch, mr: iid }, async () => {
+      if (await check()) await this.request(branchPath, { method: 'DELETE' });
+    });
+  }
+
+  async closeConflictOriginal(project: number, iid: number, source: string, target: string, expectedSha: string): Promise<void> {
+    const current = await this.getReviewDetails(project, iid, true);
+    if (current.source_project_id !== project || current.source_branch !== source || current.target_branch !== target || current.sha !== expectedSha) throw new Error('原 MR 已变化，请重新核对。');
+    if (current.state === 'closed') return;
+    if (current.state !== 'opened' || !(current.has_conflicts || current.detailed_merge_status === 'conflict')) throw new Error('原 MR 已合并或不再有确认的冲突。');
+    await Audit.sensitive('mr.close-conflict', 'high', { ...this.auditContext, project, mr: iid }, async () => {
+      try { await this.request(`/projects/${project}/merge_requests/${iid}`, { method: 'PUT', body: { state_event: 'close' } }); }
+      catch { /* Reconcile uncertain writes before allowing continuation. */ }
+      const after = await this.getReviewDetails(project, iid);
+      if (after.state !== 'closed') throw new Error('尚未确认原 MR 已关闭，请核对后继续。');
+    });
+  }
+
   async getReviewDiffVersion(projectId: number, iid: number, refs: ReviewDiffRefs): Promise<ReviewDiffVersion> {
     const path = `/projects/${projectId}/merge_requests/${iid}/versions`;
     const versions = await this.getAllPages<Omit<ReviewDiffVersion, 'diffs'>>(path);

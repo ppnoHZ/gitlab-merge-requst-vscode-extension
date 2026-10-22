@@ -53,3 +53,5 @@ VS Code 的 `RepositoryProvider` 定义平台能力，工厂根据连接返回�
 未对真实 GitHub / Enterprise 仓库执行创建操作，上线前需在测试仓库验证企业权限、代理、证书和 API 版本。
 
 下一阶段优先实现 GitHub 我的待办与冲突 PR 入口，再分别接入 Diff、Review 和受保护规则约束下的合并；之后推广默认主分支配置及更多托管平台。
+
+GitLab 现已接入[可恢复的 conflict 处理向导和审批状态栏](vscode-conflict-workflow.md)。这些新增流程未改变本页 GitHub 第一阶段的能力范围。

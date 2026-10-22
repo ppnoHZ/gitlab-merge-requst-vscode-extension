@@ -96,6 +96,11 @@ export const env = {
 };
 
 export const window = {
+  createStatusBarItem: () => {
+    const item = { text: '', tooltip: '', backgroundColor: undefined, disposed: false, show: () => {}, dispose() { this.disposed = true; } };
+    statusBars.push(item);
+    return item;
+  },
   showTextDocument: async (document: unknown) => document,
   showErrorMessage: async (message: string) => { errorMessages.push(message); },
   showQuickPick: async (items: Array<{ label: string; description?: string }>) => {
@@ -126,3 +131,6 @@ export const window = {
     error: () => {}
   })
 };
+
+export const StatusBarAlignment = { Left: 1, Right: 2 };
+export const statusBars: any[] = [];

@@ -1,3 +1,5 @@
+import { ConflictSessions } from './conflictSession';
+import { ReviewStatus } from './reviewStatus';
 import { handleCreateRemoteBranch } from './branchCreation';
 import { conflictMergeOptions } from './conflictRules';
 import * as vscode from 'vscode';
@@ -58,6 +60,20 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
 
   const tokenManager = new TokenManager(context);
+  const conflictSessions = new ConflictSessions(context.globalState, tokenManager);
+  context.subscriptions.push(registerCommand('gitlabMr.continueConflict', () => conflictSessions.resume()));
+  const approvalStatus = new ReviewStatus(async () => {
+    const connection = await currentConnection();
+    const token = await tokenManager.getToken(connection);
+    return token ? createRepositoryProvider(connection, token) : undefined;
+  });
+  context.subscriptions.push(approvalStatus,
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (['provider', 'instanceUrl', 'githubApiUrl', 'accessToken', 'approvalRefreshSeconds'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) approvalStatus.invalidate();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => approvalStatus.invalidate()),
+    context.secrets.onDidChange(() => approvalStatus.invalidate())
+  );
   const overview = new ReleaseOverviewProvider(async () => {
     const workspace = vscode.workspace.workspaceFolders?.[0];
     if (!workspace) return undefined;
@@ -126,7 +142,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const refreshPendingReviews = async (prompt = true) => {
     await pendingReviews.refresh(prompt);
     pendingTreeView.description = pendingReviews.summary;
+    void approvalStatus.refresh();
   };
+  context.subscriptions.push(registerCommand('gitlabMr.showApprovalInbox', async () => {
+    await vscode.commands.executeCommand('gitlabMr.pendingReviews.focus');
+    await refreshPendingReviews();
+  }));
   const refreshPendingReviewsCmd = registerCommand('gitlabMr.refreshPendingReviews', () =>
     refreshPendingReviews()
   );
@@ -187,7 +208,7 @@ export async function activate(context: vscode.ExtensionContext) {
         item = await pendingReviews.pickConflictedRequest();
       }
       if (!item) return;
-      if (await pendingReviews.createConflict(item)) {
+      if (await pendingReviews.createConflict(item, (service, plan, project, reviewers) => conflictSessions.start(service, plan, project, reviewers))) {
         await refreshPendingReviews(false);
         overview.invalidate();
       }
