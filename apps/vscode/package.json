@@ -294,13 +294,14 @@
         "gitlabMr.accessToken": {
           "type": "string",
           "default": "",
-          "description": "GitLab Personal Access Token（需要 api 读写权限，可直接在此输入并保存）",
-          "order": 1
+          "description": "旧版 GitLab Token 配置，仅用于兼容迁移。新 Token 请使用“快速录入 Token”命令，按平台和实例保存至 SecretStorage。",
+          "order": 1,
+          "deprecationMessage": "请使用快速录入 Token 命令安全保存。"
         },
         "gitlabMr.instanceUrl": {
           "type": "string",
           "default": "https://gitlab.com",
-          "markdownDescription": "**GitLab Server Address**：填写 GitLab 地址，例如 `https://gitlab.company.com`。不要填写 `/api/v4`。使用 GitLab.com 时保持默认值；私有实例请填写实际域名。",
+          "markdownDescription": "代码托管平台网页地址，不含 API 路径。默认值下从 origin 自动识别地址。GitHub Enterprise 请同时将 provider 设为 github。",
           "order": 2
         },
         "gitlabMr.issueLinks": {
@@ -395,6 +396,23 @@
           "default": false,
           "description": "开启详细诊断日志（API 请求状态、Git 命令、分支与界面诊断）。默认关闭，仅保留关键操作结果和需要处理的警告、错误。",
           "order": 12
+        },
+        "gitlabMr.provider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "gitlab",
+            "github"
+          ],
+          "default": "auto",
+          "description": "代码托管平台。auto 自动识别 github.com，其他域名按 GitLab 处理；GitHub Enterprise 请明确选择 github。",
+          "order": 0
+        },
+        "gitlabMr.githubApiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "可选的 GitHub API 地址。默认 github.com 使用 https://api.github.com，Enterprise 使用实例地址加 /api/v3。",
+          "order": 2
         }
       }
     },
@@ -677,13 +695,14 @@
     "watch": "tsc -watch -p ./",
     "package": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "package:vsix": "pnpm run test:publish && pnpm run compile && pnpm --package=@vscode/vsce@4.0.0 dlx vsce package --no-dependencies --skip-license --allow-missing-repository --no-rewrite-relative-links",
-    "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation",
+    "test:publish": "esbuild ./test/templateEngine.test.ts ./test/releaseReadinessView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/templateEngine.test.js && node dist/releaseReadinessView.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:branch-creation && pnpm run test:providers",
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
-    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/diagnosticLogging.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/diagnosticLogging.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation",
+    "test": "esbuild ./test/templateEngine.test.ts --bundle --outfile=dist/test.js --platform=node && node dist/test.js && esbuild ./test/releaseReadinessView.test.ts ./test/gitService.test.ts ./test/releaseReadinessInteraction.test.ts ./test/pagination.test.ts ./test/gitlabReviewers.test.ts ./test/branchDeletion.test.ts ./test/pendingReviews.test.ts ./test/myTodos.test.ts ./test/diagnosticLogging.test.ts ./test/mergeRequestReview.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseReadinessView.test.js && node dist/gitService.test.js && node dist/releaseReadinessInteraction.test.js && node dist/pagination.test.js && node dist/gitlabReviewers.test.js && node dist/branchDeletion.test.js && node dist/pendingReviews.test.js && node dist/myTodos.test.js && node dist/diagnosticLogging.test.js && node dist/mergeRequestReview.test.js && pnpm run test:filters && pnpm run test:release-overview && pnpm run test:audit && pnpm run test:branch-creation && pnpm run test:providers",
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",
-    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js"
+    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js",
+    "test:providers": "esbuild ./test/providers.test.ts --bundle --outfile=dist/providers.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/providers.test.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0"

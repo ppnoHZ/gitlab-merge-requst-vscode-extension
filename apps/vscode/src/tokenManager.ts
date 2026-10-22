@@ -1,66 +1,54 @@
 import * as vscode from 'vscode';
 import { Audit } from './audit';
+import { configuredConnection, credentialKey } from './providers/connection';
+import type { ProviderConnection } from './providers/repositoryProvider';
 
 export class TokenManager {
-  private static readonly SECRET_KEY = 'gitlabMr.personalAccessToken';
-
   constructor(private readonly context: Pick<vscode.ExtensionContext, 'secrets'>) {}
 
-  /**
-   * 获取 Access Token：优先从 VS Code 设置项获取，其次从 SecretStorage 获取
-   */
-  async getToken(): Promise<string | undefined> {
-    const config = vscode.workspace.getConfiguration('gitlabMr');
-    const configToken = config.get<string>('accessToken');
-    if (configToken && configToken.trim()) {
-      return configToken.trim();
-    }
-
-    const secretToken = await this.context.secrets.get(TokenManager.SECRET_KEY);
-    if (secretToken && secretToken.trim()) {
-      return secretToken.trim();
-    }
-
-    return undefined;
+  async getToken(connection: ProviderConnection = configuredConnection()): Promise<string | undefined> {
+    const key = credentialKey(connection);
+    const scoped = await this.context.secrets.get(key);
+    if (scoped?.trim()) return scoped.trim();
+    // Legacy credentials belong only to the configured GitLab instance, never GitHub.
+    const configured = configuredConnection();
+    if (connection.kind !== 'gitlab' || connection.instanceUrl !== configured.instanceUrl) return undefined;
+    const binding = await this.context.secrets.get('gitlabMr.legacyTokenInstance');
+    if (binding && binding !== key) return undefined;
+    const legacy = vscode.workspace.getConfiguration('gitlabMr').get<string>('accessToken')?.trim()
+      || (await this.context.secrets.get('gitlabMr.personalAccessToken'))?.trim();
+    if (!legacy) return undefined;
+    await this.context.secrets.store('gitlabMr.legacyTokenInstance', key);
+    await this.context.secrets.store(key, legacy);
+    return legacy;
   }
 
-  /**
-   * 将 Access Token 同时保存至 SecretStorage 与 VS Code 用户设置
-   */
-  async setToken(token: string): Promise<void> {
-    const trimmed = token.trim();
-    await Audit.sensitive('token.set', 'sensitive', { source: 'command' }, async () => {
-      await this.context.secrets.store(TokenManager.SECRET_KEY, trimmed);
-      const config = vscode.workspace.getConfiguration('gitlabMr');
-      await config.update('accessToken', trimmed, vscode.ConfigurationTarget.Global);
+  async setToken(token: string, connection: ProviderConnection = configuredConnection()): Promise<void> {
+    await Audit.sensitive('token.set', 'sensitive', { source: 'command', instance: connection.instanceUrl }, async () => {
+      await this.context.secrets.store(credentialKey(connection), token.trim());
     });
   }
 
-  /**
-   * 删除保存的 Token
-   */
-  async clearToken(): Promise<void> {
-    await Audit.sensitive('token.clear', 'sensitive', { source: 'command' },
-      async () => { await this.context.secrets.delete(TokenManager.SECRET_KEY); });
+  async clearToken(connection: ProviderConnection = configuredConnection()): Promise<void> {
+    await Audit.sensitive('token.clear', 'sensitive', { source: 'command', instance: connection.instanceUrl }, async () => {
+      await this.context.secrets.delete(credentialKey(connection));
+      if (connection.kind === 'gitlab') {
+        await this.context.secrets.delete('gitlabMr.personalAccessToken');
+        await this.context.secrets.store('gitlabMr.legacyTokenInstance', 'disabled');
+      }
+    });
   }
 
-  /**
-   * 弹出输入框引导用户设置 Token
-   */
-  async promptForToken(): Promise<string | undefined> {
+  async promptForToken(connection: ProviderConnection = configuredConnection()): Promise<string | undefined> {
+    const platform = connection.kind === 'github' ? 'GitHub' : 'GitLab';
     const token = await vscode.window.showInputBox({
-      title: 'GitLab Personal Access Token',
-      prompt: '请输入您的 GitLab Personal Access Token (需要 api 读写权限)',
-      password: true,
-      ignoreFocusOut: true,
-      placeHolder: 'glpat-xxxxxxxxxxxxxxxxxxxx'
+      title: `${platform} Personal Access Token`,
+      prompt: `${connection.instanceUrl}：${connection.kind === 'github' ? '需要目标仓库 Contents 和 Pull requests 读写权限' : '需要 api 权限'}`,
+      password: true, ignoreFocusOut: true
     });
-
-    if (token && token.trim()) {
-      await this.setToken(token.trim());
-      vscode.window.showInformationMessage('GitLab Access Token 已安全保存。');
-      return token.trim();
-    }
-    return undefined;
+    if (!token?.trim()) return undefined;
+    await this.setToken(token, connection);
+    vscode.window.showInformationMessage(`${platform} Access Token 已安全保存。`);
+    return token.trim();
   }
 }

@@ -1,3 +1,4 @@
+import type { RepositoryProvider } from './providers/repositoryProvider';
 import { conflictMergeOptions } from './conflictRules';
 import type { BranchReference, BaseKind } from '@gitlab-workbench/core';
 import axios from 'axios';
@@ -24,7 +25,9 @@ interface GitLabBranch {
   commit: { id: string };
 }
 
-export class GitLabService {
+export class GitLabService implements RepositoryProvider {
+  readonly kind = 'gitlab' as const;
+  readonly capabilities = { todos: true, review: true, merge: true, deleteBranch: true };
   private readonly baseUrl: string;
   private readonly token: string;
   private actor: Pick<AuditContext, 'userId' | 'username'> = {};

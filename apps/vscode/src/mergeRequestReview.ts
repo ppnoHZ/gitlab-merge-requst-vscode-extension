@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { GitLabService } from './gitlabService';
+import type { RepositoryProvider } from './providers/repositoryProvider';
 import { ReviewChangedFile, ReviewDetails, ReviewMergeRequest } from './types';
 import { Audit, AuditContext, AuditWriteError } from './audit';
 
@@ -68,7 +68,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
     return uri;
   }
 
-  load(request: ReviewMergeRequest, service: GitLabService): Promise<ReviewSnapshot> {
+  load(request: ReviewMergeRequest, service: RepositoryProvider): Promise<ReviewSnapshot> {
     const cached = this.snapshots.get(request);
     if (cached) {
       return Promise.resolve(cached);
@@ -88,7 +88,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
   }
 
   private async loadSnapshot(
-    request: ReviewMergeRequest, service: GitLabService, generation: number
+    request: ReviewMergeRequest, service: RepositoryProvider, generation: number
   ): Promise<ReviewSnapshot> {
     const details = await service.getReviewDetails(request.project_id, request.iid);
     if (details.state !== 'opened') {
@@ -125,7 +125,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
     await Audit.event('review.open-diff', file.auditContext);
   }
 
-  async approve(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
+  async approve(request: ReviewMergeRequest, service: RepositoryProvider, userId: number): Promise<boolean> {
     return Audit.operation('mr.approve', 'high', {
       ...service.auditContext, project: request.project_id, mr: request.iid, userId, source: 'command'
     }, () => this.approveAudited(request, service, userId));
@@ -144,7 +144,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
     }
   }
 
-  async merge(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
+  async merge(request: ReviewMergeRequest, service: RepositoryProvider, userId: number): Promise<boolean> {
     return Audit.operation('mr.merge', 'high', {
       ...service.auditContext, project: request.project_id, mr: request.iid, userId, source: 'command'
     }, async () => {
@@ -195,7 +195,7 @@ export class MergeRequestReview implements vscode.TextDocumentContentProvider {
     });
   }
 
-  private async approveAudited(request: ReviewMergeRequest, service: GitLabService, userId: number): Promise<boolean> {
+  private async approveAudited(request: ReviewMergeRequest, service: RepositoryProvider, userId: number): Promise<boolean> {
     if (this.approving.has(request)) {
       throw new Error('该 MR 正在批准中或合并中，请勿重复操作。');
     }

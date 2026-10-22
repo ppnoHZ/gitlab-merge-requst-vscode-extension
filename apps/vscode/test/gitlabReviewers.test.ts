@@ -2,8 +2,10 @@ import assert from 'assert';
 import axios from 'axios';
 import { GitLabService } from '../src/gitlabService';
 import { Logger } from '../src/logger';
+import { configuration } from './vscodeMock';
 
 async function runTests(): Promise<void> {
+  configuration.set('verboseLogging', true);
   const logs: Array<{ message: string; details: unknown[] }> = [];
   const originalInfo = Logger.info;
   Logger.info = (message, ...details) => { logs.push({ message, details }); };
@@ -40,15 +42,15 @@ async function runTests(): Promise<void> {
   assert.equal(requests.at(-1)?.url.pathname, '/api/v4/projects/group%2Fproject/merge_requests');
   assert.deepEqual(requests.at(-1)?.body.reviewer_ids, [12, 34]);
   assert.equal('assignee_ids' in requests.at(-1)!.body, false);
-  assert.deepEqual(logs.find(log => log.message === '[Reviewer 创建请求]')?.details, [{
+  assert.deepEqual(logs.find(log => log.message === '[诊断] [Reviewer 创建请求]')?.details, [{
     projectId: 'group/project', sourceBranch: 'feature/v1/task', targetBranch: 'release/v1',
     reviewer_ids: [12, 34]
   }]);
-  assert.deepEqual(logs.find(log => log.message === '[Reviewer 创建响应]')?.details, [{
+  assert.deepEqual(logs.find(log => log.message === '[诊断] [Reviewer 创建响应]')?.details, [{
     iid: 1, web_url: 'https://gitlab.example.com/mr/1', reviewersFieldPresent: true,
     reviewers: [{ id: 12, username: 'alice', state: undefined }]
   }]);
-  assert.ok(logs.some(log => log.message === '[Reviewer 账号解析]'));
+  assert.ok(logs.some(log => log.message === '[诊断] [Reviewer 账号解析]'));
 
   await service.createMergeRequest(payload);
   assert.equal('reviewer_ids' in requests.at(-1)!.body, false);
@@ -59,6 +61,7 @@ async function runTests(): Promise<void> {
   failLookup = true;
   await assert.rejects(service.resolveReviewerIds(['alice']), /Reviewer alice.*403.*Forbidden/);
   Logger.info = originalInfo;
+  configuration.delete('verboseLogging');
   console.log('[PASS] reviewers: configured usernames, normalization, deduplication, lookup failures and reviewer_ids payload');
 }
 

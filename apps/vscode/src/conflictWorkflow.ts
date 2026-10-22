@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { conflictBranchName, type BranchReference } from '@gitlab-workbench/core';
 import { AuditApiError } from './audit';
-import { GitLabService } from './gitlabService';
+import type { RepositoryProvider } from './providers/repositoryProvider';
 import type { ReviewMergeRequest, ReviewDetails } from './types';
 import { conflictTargets, isConflictSource, validateConflictTarget, hasMergeConflicts, canCreateConflict, conflictResolutionHint } from './conflictRules';
 
@@ -70,7 +70,7 @@ git push --set-upstream origin '${plan.branch}'
 `;
 }
 
-export async function pickConflictPlan(service: GitLabService, projectId: number, selectedBranch?: string): Promise<ConflictPlan | undefined> {
+export async function pickConflictPlan(service: RepositoryProvider, projectId: number, selectedBranch?: string): Promise<ConflictPlan | undefined> {
   let source: BranchReference | undefined;
   if (selectedBranch && isConflictSource(selectedBranch)) {
     source = await service.getBranchCreationRef(projectId, 'branch', selectedBranch);
@@ -119,7 +119,7 @@ export async function pickConflictPlan(service: GitLabService, projectId: number
 
 /** Shared remote creation path used by branch management and MR-bound actions. */
 export async function createConflictFromPlan(
-  service: GitLabService,
+  service: RepositoryProvider,
   project: { id: number; label: string; webUrl: string },
   plan: ConflictPlan,
   beforeCreate?: () => Promise<void>
@@ -144,13 +144,13 @@ export async function createConflictFromPlan(
     await vscode.window.showTextDocument(document, { preview: false });
     const action = await vscode.window.showInformationMessage(`${result.recovered ? '已核对远程分支' : '创建成功'}：${plan.branch}；请按处理指南解决冲突，再向 ${plan.target.name} 创建 MR。`, '打开分支', '复制名称');
     if (action === '复制名称') await vscode.env.clipboard.writeText(plan.branch);
-    if (action === '打开分支') await vscode.env.openExternal(vscode.Uri.parse(`${project.webUrl}/-/tree/${encodeURIComponent(plan.branch)}`));
+    if (action === '打开分支') await vscode.env.openExternal(vscode.Uri.parse(`${project.webUrl}/${service.kind === 'github' ? '' : '-/'}tree/${encodeURIComponent(plan.branch)}`));
   } catch { vscode.window.showWarningMessage(`远程分支 ${plan.branch} 已创建，后续界面操作失败。请勿重复创建；将 ${plan.source.name} 合入该分支、处理冲突后向 ${plan.target.name} 创建 MR。`); }
   return true;
 }
 
 export async function createConflictFromMergeRequest(
-  service: GitLabService, request: ReviewMergeRequest, requireActive: () => void
+  service: RepositoryProvider, request: ReviewMergeRequest, requireActive: () => void
 ): Promise<boolean> {
   requireActive();
   const check = (current: ReviewDetails) => {

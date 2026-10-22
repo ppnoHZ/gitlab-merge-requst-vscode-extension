@@ -3,7 +3,8 @@ import { conflictMergeOptions } from './conflictRules';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import { GitService, MainMergeResult } from './gitService';
-import { GitLabService } from './gitlabService';
+import { createRepositoryProvider } from './providers/factory';
+import { configuredConnection } from './providers/connection';
 import { TemplateEngine } from './templateEngine';
 import { TokenManager } from './tokenManager';
 import { Logger } from './logger';
@@ -45,7 +46,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     });
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-    for (const key of ['instanceUrl', 'accessToken', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
+    for (const key of ['provider', 'githubApiUrl', 'instanceUrl', 'accessToken', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
       'defaultReviewers', 'removeSourceBranch', 'squash', 'defaultTargetBranch']) {
       if (event.affectsConfiguration(`gitlabMr.${key}`)) {
         void Audit.event('config.observed', { setting: key, source: 'configuration' }, 'sensitive').catch(error => {
@@ -60,16 +61,12 @@ export async function activate(context: vscode.ExtensionContext) {
   const overview = new ReleaseOverviewProvider(async () => {
     const workspace = vscode.workspace.workspaceFolders?.[0];
     if (!workspace) return undefined;
-    const token = await tokenManager.getToken();
-    if (!token) return undefined;
     const git = new GitService(workspace.uri.fsPath);
     const repo = await git.getRepoInfo();
-    let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace.uri)
-      .get<string>('instanceUrl', 'https://gitlab.com').trim();
-    if (instanceUrl === 'https://gitlab.com' && repo.gitlabHost !== 'gitlab.com') {
-      instanceUrl = `https://${repo.gitlabHost}`;
-    }
-    const service = new GitLabService(instanceUrl, token);
+    const connection = configuredConnection(repo, workspace.uri);
+    const token = await tokenManager.getToken(connection);
+    if (!token) return undefined;
+    const service = createRepositoryProvider(connection, token);
     const project = await service.getProject(repo.projectPath);
     return loadReleaseOverview(repo.projectPath, {
       branches: page => service.getProjectBranches(project.id, page),
@@ -105,35 +102,22 @@ export async function activate(context: vscode.ExtensionContext) {
       if (event.visible && !overview.snapshot) void refreshOverview();
     }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+      if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
         overview.invalidate();
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => overview.invalidate()),
     context.secrets.onDidChange(event => {
-      if (event.key === 'gitlabMr.personalAccessToken') overview.invalidate();
+      if (event.key === 'gitlabMr.personalAccessToken' || event.key.startsWith('gitlabMr.credentials:')) overview.invalidate();
     })
   );
   if (overviewTree.visible) void refreshOverview();
   const pendingReviews = new PendingReviewsProvider(async prompt => {
-    let token = await tokenManager.getToken();
-    if (!token && prompt) {
-      token = await tokenManager.promptForToken();
-    }
-    if (!token) {
-      return undefined;
-    }
-    const workspace = vscode.workspace.workspaceFolders?.[0];
-    let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace?.uri)
-      .get<string>('instanceUrl', 'https://gitlab.com').trim();
-    if (instanceUrl === 'https://gitlab.com' && workspace) {
-      const git = new GitService(workspace.uri.fsPath);
-      if (await git.isGitRepo()) {
-        const { host } = git.parseGitLabRemote(await git.getRemoteUrl());
-        instanceUrl = `https://${host}`;
-      }
-    }
-    return new GitLabService(instanceUrl, token);
+    const connection = await currentConnection();
+    let token = await tokenManager.getToken(connection);
+    if (!token && prompt) token = await tokenManager.promptForToken(connection);
+    if (!token) return undefined;
+    return createRepositoryProvider(connection, token);
   }, true);
   const pendingTreeView = vscode.window.createTreeView('gitlabMr.pendingReviews', {
     treeDataProvider: pendingReviews,
@@ -230,7 +214,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
   const pendingConnectionChanged = vscode.workspace.onDidChangeConfiguration(event => {
-    if (event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+    if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
       pendingReviews.reset();
       pendingTreeView.description = undefined;
       if (pendingTreeView.visible) {
@@ -249,7 +233,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     pendingVisibility, pendingConnectionChanged,
     context.secrets.onDidChange(event => {
-      if (event.key === 'gitlabMr.personalAccessToken') {
+      if (event.key === 'gitlabMr.personalAccessToken' || event.key.startsWith('gitlabMr.credentials:')) {
         void Audit.event('token.observed', { source: 'configuration' }, 'sensitive').catch(error => {
           Logger.error('凭据变更审计失败', error);
           vscode.window.showErrorMessage('凭据已经变更，但审计写入失败；敏感操作已暂停。');
@@ -390,7 +374,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // 3. 注册设置 Token 命令
   const setTokenCmd = registerCommand('gitlabMr.setToken', async () => {
     debugLog('触发设置 Token 操作');
-    await tokenManager.promptForToken();
+    await tokenManager.promptForToken(await currentConnection());
   });
 
   // 4. 注册创建 Merge Request 命令
@@ -697,7 +681,9 @@ async function deleteBranchAudited(
     return false;
   }
   await Audit.note('confirmed', { branch });
-  const token = await tokenManager.getToken() || await tokenManager.promptForToken();
+  const connection = await currentConnection();
+  if (connection.kind === 'github') throw new Error('GitHub 分支删除尚未接入，请在浏览器中操作。');
+  const token = await tokenManager.getToken(connection) || await tokenManager.promptForToken(connection);
   if (!token) {
     return false;
   }
@@ -710,12 +696,7 @@ async function deleteBranchAudited(
     async () => {
       const gitService = new GitService(workspace.uri.fsPath);
       const repoInfo = await gitService.getRepoInfo();
-      let instanceUrl = vscode.workspace.getConfiguration('gitlabMr', workspace.uri)
-        .get<string>('instanceUrl', 'https://gitlab.com').trim();
-      if (instanceUrl === 'https://gitlab.com' && repoInfo.gitlabHost !== 'gitlab.com') {
-        instanceUrl = `https://${repoInfo.gitlabHost}`;
-      }
-      const service = new GitLabService(instanceUrl, token);
+      const service = createRepositoryProvider(connection, token);
       const project = await service.getProject(repoInfo.projectPath);
       await Audit.note('confirmed', { ...service.auditContext, project: project.id, branch });
       // Never authorize deletion from the cached tree marker.
@@ -778,7 +759,8 @@ async function createMergeRequestAudited(
 
   // 3. 读取配置项
   const config = vscode.workspace.getConfiguration('gitlabMr', workspaceFolders[0].uri);
-  let instanceUrl = config.get<string>('instanceUrl', 'https://gitlab.com').trim();
+  const connection = configuredConnection(repoInfo, workspaceFolders[0].uri);
+  const instanceUrl = connection.instanceUrl;
   const defaultTarget = config.get<string>('defaultTargetBranch', 'master');
   const hideNonConformingTargets = config.get<boolean>('hideNonConformingTargetBranches', true);
   const titleTemplate = config.get<string>(
@@ -804,32 +786,20 @@ async function createMergeRequestAudited(
   let squash = config.get<boolean>('squash', false);
   const autoOpenInBrowser = config.get<boolean>('autoOpenInBrowser', true);
 
-  // 自动探测 GitLab 地址：若配置仍为默认 gitlab.com，但 remote 探测出私有域名
-  if (
-    instanceUrl === 'https://gitlab.com' &&
-    repoInfo.gitlabHost &&
-    repoInfo.gitlabHost !== 'gitlab.com'
-  ) {
-    instanceUrl = `https://${repoInfo.gitlabHost}`;
-    debugLog(`已自动从 remote origin 探测到私有 GitLab 实例地址: ${instanceUrl}`);
-  } else {
-    debugLog(`使用 GitLab 实例地址: ${instanceUrl}`);
-  }
-
   // 4. 获取 Access Token
-  let token = await tokenManager.getToken();
+  let token = await tokenManager.getToken(connection);
   if (!token) {
     Logger.warn('未检测到有效 Access Token，提示用户配置');
     const action = await vscode.window.showInformationMessage(
-      '未检测到 GitLab Access Token，请先配置。',
+      `未检测到 ${connection.kind === 'github' ? 'GitHub' : 'GitLab'} Access Token，请先配置。`,
       '打开可视化设置',
       '快速输入 Token'
     );
     if (action === '打开可视化设置') {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'gitlabMr.accessToken');
+      vscode.commands.executeCommand('workbench.action.openSettings', 'gitlabMr');
       return false;
     } else if (action === '快速输入 Token') {
-      token = await tokenManager.promptForToken();
+      token = await tokenManager.promptForToken(connection);
     }
     if (!token) {
       debugLog('用户取消了 Token 输入');
@@ -919,9 +889,10 @@ async function createMergeRequestAudited(
     promptText = '提示：未在分支/提交中识别到变更单号，请补充标题中的 <CRQ> 后回车';
   }
 
-  if (sourceBranch.startsWith('conflict/')) promptText += '；conflict MR 固定：合并后删除源分支、不 Squash';
+  if (connection.kind === 'github') promptText += '；GitHub 的 Squash 和删除源分支需在合并时或仓库设置中配置';
+  if (connection.kind === 'gitlab' && sourceBranch.startsWith('conflict/')) promptText += '；conflict MR 固定：合并后删除源分支、不 Squash';
   const finalTitle = await vscode.window.showInputBox({
-    title: '确认 Merge Request 标题',
+    title: connection.kind === 'github' ? '确认 Pull Request 标题' : '确认 Merge Request 标题',
     prompt: promptText,
     value: defaultTitle,
     ignoreFocusOut: true,
@@ -940,12 +911,12 @@ async function createMergeRequestAudited(
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: '正在创建 GitLab Merge Request...',
+      title: connection.kind === 'github' ? '正在创建 GitHub Pull Request...' : '正在创建 GitLab Merge Request...',
       cancellable: false
     },
     async progress => {
-      progress.report({ message: '正在连接 GitLab 服务...' });
-      const gitlabService = new GitLabService(instanceUrl, token!);
+      progress.report({ message: `正在连接 ${connection.kind === 'github' ? 'GitHub' : 'GitLab'} 服务...` });
+      const gitlabService = createRepositoryProvider(connection, token!);
 
       // 获取项目信息
       progress.report({ message: `正在定位项目: ${repoInfo.projectPath}...` });
@@ -973,7 +944,7 @@ async function createMergeRequestAudited(
         if (notFoundUsers.length > 0) {
           Logger.warn(`未匹配到的 Reviewer 用户: ${notFoundUsers.join(', ')}`);
           throw new Error(
-            `未能在 GitLab 找到以下 Reviewer 用户: ${notFoundUsers.join(', ')}。未创建 MR，请检查 gitlabMr.defaultReviewers 配置后重试。`
+            `未能在 ${connection.kind === 'github' ? 'GitHub' : 'GitLab'} 找到以下 Reviewer 用户: ${notFoundUsers.join(', ')}。未创建 MR，请检查 gitlabMr.defaultReviewers 配置后重试。`
           );
         }
       }
@@ -992,7 +963,11 @@ async function createMergeRequestAudited(
       });
 
       Logger.info(`Merge Request 创建成功! IID: !${mr.iid}, Web URL: ${mr.web_url}`);
-      if (reviewerIds.length > 0) {
+      for (const warning of mr.warnings ?? []) {
+        Logger.warn(warning);
+        vscode.window.showWarningMessage(warning);
+      }
+      if (connection.kind === 'gitlab' && reviewerIds.length > 0) {
         const missingIds = reviewerIds.filter(id => !mr.reviewers?.some(user => user.id === id));
         if (missingIds.length > 0) {
           const message = `MR !${mr.iid} 已创建，但 GitLab 创建响应未确认以下 Reviewer ID: ${missingIds.join(', ')}。请打开该 MR 核对审核人，不要重复创建；查看 GitLab MR 日志以排查。`;
@@ -1002,7 +977,7 @@ async function createMergeRequestAudited(
       }
 
       // 创建成功后通知
-      const successMessage = `GitLab MR 创建成功: !${mr.iid} ${mr.title}`;
+      const successMessage = `${connection.kind === 'github' ? 'GitHub PR 创建成功: #' : 'GitLab MR 创建成功: !'}${mr.iid} ${mr.title}`;
       const openBtn = '在浏览器打开';
       const copyBtn = '复制链接';
       const viewLogsBtn = '查看日志';
@@ -1104,38 +1079,32 @@ export async function handleCheckReleaseReadiness(
       return;
     }
 
-    let token = await tokenManager.getToken();
-    if (!token && options.promptForToken === false) {
-      return;
-    }
-
     const gitService = new GitService(workspace.uri.fsPath);
     const repoInfo = await gitService.getRepoInfo();
     const config = vscode.workspace.getConfiguration('gitlabMr');
-    let instanceUrl = config.get<string>('instanceUrl', 'https://gitlab.com').trim();
-    if (instanceUrl === 'https://gitlab.com' && repoInfo.gitlabHost !== 'gitlab.com') {
-      instanceUrl = `https://${repoInfo.gitlabHost}`;
-    }
+    const connection = configuredConnection(repoInfo, workspace.uri);
+    let token = await tokenManager.getToken(connection);
+    if (!token && options.promptForToken === false) return;
 
     if (!token) {
       const action = await vscode.window.showInformationMessage(
-        '未检测到 GitLab Access Token，请先配置。',
+        `未检测到 ${connection.kind === 'github' ? 'GitHub' : 'GitLab'} Access Token，请先配置。`,
         '打开可视化设置',
         '快速输入 Token'
       );
       if (action === '打开可视化设置') {
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'gitlabMr.accessToken');
+        await vscode.commands.executeCommand('workbench.action.openSettings', 'gitlabMr');
         return;
       }
       if (action === '快速输入 Token') {
-        token = await tokenManager.promptForToken();
+        token = await tokenManager.promptForToken(connection);
       }
       if (!token) {
         return;
       }
     }
 
-    const gitlabService = new GitLabService(instanceUrl, token);
+    const gitlabService = createRepositoryProvider(connection, token);
     if (loadingBranches && branchState.page === 0) {
       try {
         const gitlabVersion = await gitlabService.getGitLabVersion();
@@ -1150,7 +1119,7 @@ export async function handleCheckReleaseReadiness(
         await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: '正在获取 GitLab 分支列表...',
+            title: `正在获取 ${connection.kind === 'github' ? 'GitHub' : 'GitLab'} 分支列表...`,
             cancellable: false
           },
           async () => {
@@ -1349,4 +1318,13 @@ export function deactivate() {
     statusBarItem.dispose();
   }
   Logger.dispose();
+}
+
+async function currentConnection() {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) return configuredConnection();
+  const git = new GitService(folder.uri.fsPath);
+  if (!await git.isGitRepo()) return configuredConnection(undefined, folder.uri);
+  const remoteUrl = await git.getRemoteUrl();
+  return configuredConnection({ gitlabHost: git.parseGitLabRemote(remoteUrl).host, remoteUrl }, folder.uri);
 }

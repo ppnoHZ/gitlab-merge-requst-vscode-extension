@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { GitLabService } from './gitlabService';
+import type { RepositoryProvider } from './providers/repositoryProvider';
 import { Logger } from './logger';
 import { ReviewMergeRequest, ReviewProject } from './types';
 import { MergeRequestReview, ReviewFile } from './mergeRequestReview';
@@ -30,7 +30,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   private children = new Map<string, PendingReviewItem[]>();
   private generation = 0;
   private loading = false;
-  private service: GitLabService | undefined;
+  private service: RepositoryProvider | undefined;
   private userId: number | undefined;
   private activeRequests = new Set<PendingReviewItem>();
   private files = new Map<PendingReviewItem, PendingReviewItem[]>();
@@ -40,7 +40,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
   loaded = false;
   summary = '';
 
-  constructor(private readonly connect: (prompt: boolean) => Promise<GitLabService | undefined>, private readonly includeAuthored = false) {}
+  constructor(private readonly connect: (prompt: boolean) => Promise<RepositoryProvider | undefined>, private readonly includeAuthored = false) {}
 
   getTreeItem(item: PendingReviewItem): vscode.TreeItem {
     return item;
@@ -100,7 +100,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     return item;
   }
 
-  private requireRequest(item: PendingReviewItem): { request: ReviewMergeRequest; service: GitLabService; userId: number } {
+  private requireRequest(item: PendingReviewItem): { request: ReviewMergeRequest; service: RepositoryProvider; userId: number } {
     if (item.kind !== 'request' || !item.request || !this.activeRequests.has(item) || !this.service || !this.userId) {
       throw new Error('此 MR 列表已失效，请刷新后重新选择。');
     }
@@ -226,6 +226,12 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       if (!service) {
         this.roots = [this.message(`请配置 GitLab Token，点击加载${viewName}的 MR`, true)];
         this.summary = '未配置 Token';
+        return;
+      }
+      if (!service.capabilities.todos) {
+        this.roots = [this.message('GitHub 待办、审批与合并尚未接入，请在浏览器查看 PR。')];
+        this.summary = 'GitHub 待办尚未接入';
+        this.loaded = true;
         return;
       }
       const user = await service.getCurrentUser();
