@@ -5,10 +5,12 @@
 ## 功能
 
 - 在 **View → Tool Windows → GitLab Workbench** 打开工作台。
-- 连接设置保存实例网页地址与项目路径（例如 `group/project`）。Personal Access Token 需有 `api` 权限，存入 IDE PasswordSafe，按实例隔离。留空仅保留当前实例已有凭据。
+- 连接设置自动从当前项目的 Git remote 识别实例网页地址与项目路径，支持 HTTPS、SSH、子组及 `.git` 后缀。多个仓库/remote 时可选择后填入，不执行 fetch。已有配置不会被自动覆盖；SSH 的网页协议、端口和部署子路径无法完全推断，可手动调整。当前仅接入 GitLab。
+- **保存配置**与**测试连接**独立：离线也能保存；测试只检查当前 Token 和项目访问权限，不改动配置，失败时窗口保留输入。支持填写项目首页 URL，实例地址的 `/api/v4` 后缀会自动去除。
+- Personal Access Token 需有 `api` 权限，存入 IDE PasswordSafe，按实例隔离。留空保留当前实例已有凭据，界面显示是否已保存而不回显 Token。IDE 的 Passwords 设置需选择持久化凭据存储；若设置为“不保存”，Token 无法跨重启保留。
 - 分支分页加载、关键词/前缀搜索，创建 release/hotfix；支持 branch 或 tag 基线，提交 SHA 二次校验。未知写入结果先核对远程状态，不自动重复提交。
 - 我的待办展示“我提交的”和“待我审批”的开放 MR。有确认冲突的 MR 使用红色图标；状态未知不标为已确认无冲突。
-- 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。
+- 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。审批接口返回 403/404/405 时仍展示已加载的 MR，指派给我的项目标为“审批状态未确认”，数量显示 `?`，不伪装为 0。
 - 从同仓库 release/hotfix → dev/tst/uat/pre 的冲突 MR 创建 `conflict/<完整 Source>`。创建基线固定为 Target，保留任务关联；原 MR 的关闭是独立确认操作。
 - 通过 IDEA 自带 Git 工具人工解决、测试、提交和推送后，在“替代 MR / 处理指引”选择关联任务。替代 MR 固定原 Target、附原 MR 链接，继承原 Reviewer ID，可编辑标题、描述和 Reviewer。
 - 描述保留分支、工单、自检清单和生成说明。提交及文件列表使用两个确认 SHA 的 GitLab compare 实际差异；响应超时或已知截断时停止生成。确认后 SHA 变化则重新预览。
@@ -16,7 +18,7 @@
 
 本插件不执行本地切分支、merge、worktree、commit 或 push；不自动解决冲突。任务和连接配置保存于项目 `.idea/gitlab-workbench.xml`，不含 Token，但含内部实例/项目/MR 信息，按团队约定决定是否纳入版本控制。任务记录不作为团队共享锁。
 
-尚未接入 GitHub、上线总览、IDE 内 MR Diff、审批/合并按钮。需要审阅、批准或合并时使用“打开 MR”进入 GitLab。
+当前只支持 GitLab。上线总览、IDE 内 MR Diff、审批/合并按钮尚未接入，需要审阅、批准或合并时使用“打开 MR”进入 GitLab。
 
 ## 构建、测试与安装
 
@@ -32,7 +34,7 @@ node scripts/idea.mjs buildPlugin
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.0.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.1.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
 仓库内 GitHub Actions 工作流 **IDEA plugin** 会构建和运行测试；成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
@@ -43,4 +45,11 @@ node scripts/idea.mjs buildPlugin
 
 当前开发环境的 JetBrains SDK 下载被网络代理以 HTTP 403 拒绝；完整插件编译、打包和项目配置检查已改由 GitHub Actions 执行并通过，安装包位于成功运行的 Artifacts。当前未进行 IDE 沙箱交互及真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
 
-插件保持标准 TLS 证书校验，不禁用 HTTPS 校验。企业自签 CA 需通过受信任的 JVM/企业证书配置接入。连接不自动跟随重定向，避免将 Token 发往其他实例。
+插件使用 IDE 的默认代理选择器与 CertificateManager SSL 上下文，可通过 **Settings → HTTP Proxy / Server Certificates** 配置公司网络和受信任证书，不禁用 HTTPS 校验。连接不自动跟随重定向，避免将 Token 发往其他实例。错误信息区分 Token 无效、权限不足、项目不可见、SSO/重定向、代理认证、DNS、证书及超时，不回显 Token 或原始服务端响应。
+
+## 首次连接
+
+1. 打开带有 Git remote 的项目，在工作台点击“连接设置”。单个 remote 会自动填好地址和项目路径；多个 remote 请选择后点击“从 remote 填入”。
+2. 核对 GitLab 网页地址，填写具有 `api` 权限的 Personal Access Token。
+3. 可先点击“测试连接”，成功后点击“保存配置”；暂未接入公司 VPN 时也可直接保存，稍后刷新。
+4. 下次打开工作台会使用保存的配置加载分支。无需重新填写项目或 Token；测试失败可在设置窗口直接修改并重试。

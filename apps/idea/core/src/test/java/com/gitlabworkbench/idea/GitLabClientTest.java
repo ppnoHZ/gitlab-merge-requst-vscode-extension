@@ -29,6 +29,8 @@ class GitLabClientTest {
         String path = exchange.getRequestURI().getPath(), query = exchange.getRequestURI().getQuery(); paths.add(exchange.getRequestURI().toString());
         if (mode.equals("slow")) { Thread.sleep(500); send(exchange, 200, "{}"); return; }
         if (mode.equals("redirect")) { exchange.getResponseHeaders().set("Location", base + "/other"); send(exchange, 302, "{}"); return; }
+        if (mode.startsWith("http-")) { send(exchange, Integer.parseInt(mode.substring(5)), "{\"message\":\"test-token must not be shown\"}"); return; }
+        if (mode.equals("login-page")) { send(exchange, 200, "<html>SSO login test-token</html>"); return; }
         if (exchange.getRequestMethod().equals("POST")) {
             posts.incrementAndGet(); body = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
             if (path.endsWith("/branches")) { created = true; if (mode.equals("lost")) { send(exchange, 500, "{}"); return; } send(exchange, 201, ref(body.get("branch").getAsString(), body.get("ref").getAsString())); }
@@ -64,10 +66,48 @@ class GitLabClientTest {
     @Test void branchCreateUsesPinnedShaAndDoesNotOverwrite() { api.createBranch(3, "release/2", "tag", "v1", SHA); assertEquals(SHA, body.get("ref").getAsString()); assertThrows(IllegalStateException.class, () -> api.createBranch(3, "release/2", "tag", "v1", SHA)); assertEquals(1, posts.get()); }
     @Test void changedBaselineAnd403DoNotCreate() { mode = "changed"; assertThrows(IllegalStateException.class, () -> api.createBranch(3, "release/2", "branch", "main", SHA)); mode = "denied"; assertThrows(GitLabClient.ApiException.class, () -> api.createBranch(3, "release/2", "branch", "main", SHA)); assertEquals(0, posts.get()); }
     @Test void lostBranchResponseReconcilesWithoutAnotherPost() { mode = "lost"; assertEquals(SHA, api.createBranch(3, "conflict/release/1", "branch", "tst", SHA).sha()); assertEquals(1, posts.get()); }
-    @Test void authoredAndApprovalCountsAreDistinctAndDeduplicated() { var todos = api.todos(); assertEquals(2, todos.authored().size()); assertEquals(1, todos.reviews().size()); mode = "approval-failure"; assertThrows(GitLabClient.ApiException.class, () -> api.todos()); }
+    @Test void authoredAndApprovalCountsAreDistinctAndDeduplicated() { var todos = api.todos(); assertEquals(2, todos.authored().size()); assertEquals(1, todos.reviews().size()); assertTrue(todos.approvalsComplete()); }
+    @Test void unavailableApprovalsKeepAuthoredMrsButDoNotInventACount() {
+        mode = "approval-failure"; var todos = api.todos();
+        assertEquals(2, todos.authored().size()); assertEquals(2, todos.reviews().size()); assertFalse(todos.approvalsComplete());
+    }
     @Test void closesOnlyConfirmedVersionAndReconcilesLostResponse() { var original = api.mr(3, 1); mode = "lost"; api.closeOriginal(original); assertTrue(closed); api.closeOriginal(original); }
     @Test void comparisonUsesActualShasAndRejectsIncompleteData() { var result = api.compare(3, SHA, OTHER); assertEquals(List.of("M actual.txt"), result.files()); assertTrue(paths.getLast().contains("straight=false")); assertTrue(paths.getLast().contains("from=" + OTHER)); mode = "truncated"; assertThrows(IllegalStateException.class, () -> api.compare(3, SHA, OTHER)); }
     @Test void replacementForcesTargetRulesAndMergeOptions() { var result = api.createReplacement(3, "conflict/release/1", "tst", "Title", "Description", List.of(7L)); assertEquals(9, result.iid()); assertTrue(body.get("remove_source_branch").getAsBoolean()); assertFalse(body.get("squash").getAsBoolean()); assertEquals(7, body.getAsJsonArray("reviewer_ids").get(0).getAsInt()); assertThrows(IllegalArgumentException.class, () -> api.createReplacement(3, "conflict/release/1", "main", "Title", "Description", List.of(7L))); }
     @Test void requestTimeoutAndRedirectProtection() { mode = "slow"; assertThrows(GitLabClient.ApiException.class, () -> new GitLabClient(base, "test-token", Duration.ofMillis(80)).project("g/p")); mode = "redirect"; assertEquals(302, assertThrows(GitLabClient.ApiException.class, () -> api.project("g/p")).status); }
     @Test void validatesInstanceAndConflictRules() { assertThrows(IllegalArgumentException.class, () -> GitLabClient.normalizeInstance("https://token@gitlab.test")); assertThrows(IllegalArgumentException.class, () -> GitLabClient.normalizeInstance("file:///tmp")); assertEquals("https://gitlab.test", GitLabClient.normalizeInstance("https://gitlab.test/")); api.mr(3, 1).requireConflict(); }
+    @Test void connectionTestChecksAuthenticationThenProjectWithoutWriting() {
+        assertEquals(3, api.testConnection("g/p").id());
+        assertEquals(List.of("/api/v4/user", "/api/v4/projects/g%2Fp"), paths); assertEquals(0, posts.get());
+        paths.clear(); mode = "http-401";
+        assertThrows(GitLabClient.ApiException.class, () -> api.testConnection("g/p"));
+        assertEquals(List.of("/api/v4/user"), paths);
+    }
+    @Test void errorsExplainWhatToFixWithoutEchoingServerSecrets() {
+        Map<Integer, String> cases = Map.of(401, "Token", 403, "权限", 404, "项目", 407, "代理", 429, "频繁", 502, "网关");
+        cases.forEach((code, hint) -> {
+            mode = "http-" + code;
+            var error = assertThrows(GitLabClient.ApiException.class, () -> api.project("g/p"));
+            assertEquals(code, error.status); assertTrue(error.getMessage().contains(hint)); assertFalse(error.getMessage().contains("test-token"));
+        });
+        mode = "login-page";
+        var error = assertThrows(GitLabClient.ApiException.class, () -> api.project("g/p"));
+        assertTrue(error.getMessage().contains("SSO")); assertFalse(error.getMessage().contains("test-token"));
+    }
+    @Test void networkDiagnosticsDistinguishDnsCertificatesAndTimeouts() {
+        assertTrue(GitLabClient.networkError(new java.io.IOException(new UnknownHostException())).contains("DNS"));
+        assertTrue(GitLabClient.networkError(new javax.net.ssl.SSLHandshakeException("secret")).contains("Server Certificates"));
+        assertTrue(GitLabClient.networkError(new java.net.http.HttpTimeoutException("secret")).contains("超时"));
+        assertTrue(GitLabClient.networkError(new ConnectException("secret")).contains("端口"));
+    }
+    @Test void usesConfiguredProxySelector() {
+        ProxySelector old = ProxySelector.getDefault(); AtomicInteger selected = new AtomicInteger();
+        try {
+            ProxySelector.setDefault(new ProxySelector() {
+                @Override public List<Proxy> select(URI uri) { selected.incrementAndGet(); return List.of(Proxy.NO_PROXY); }
+                @Override public void connectFailed(URI uri, SocketAddress address, java.io.IOException error) {}
+            });
+            new GitLabClient(base, "test-token").project("g/p"); assertTrue(selected.get() > 0);
+        } finally { ProxySelector.setDefault(old); }
+    }
 }

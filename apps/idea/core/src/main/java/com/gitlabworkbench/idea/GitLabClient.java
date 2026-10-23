@@ -2,6 +2,7 @@ package com.gitlabworkbench.idea;
 
 import com.google.gson.*;
 import java.net.URI;
+import java.net.ProxySelector;
 import java.net.URLEncoder;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
@@ -21,7 +22,9 @@ public final class GitLabClient {
         }
     }
     public record Page<T>(List<T> items, int next) {}
-    public record Todos(List<Mr> authored, List<Mr> reviews) {}
+    public record Todos(List<Mr> authored, List<Mr> reviews, boolean approvalsComplete) {
+        public Todos(List<Mr> authored, List<Mr> reviews) { this(authored, reviews, true); }
+    }
     public record Comparison(List<String> commits, List<String> files) {}
     public static final class ApiException extends RuntimeException {
         public final int status;
@@ -34,14 +37,29 @@ public final class GitLabClient {
     private final Duration timeout;
     public GitLabClient(String instance, String token) { this(instance, token, Duration.ofSeconds(20)); }
     GitLabClient(String instance, String token, Duration timeout) {
+        this(instance, token, timeout, clientBuilder(timeout).build());
+    }
+    public GitLabClient(String instance, String token, HttpClient http) {
+        this(instance, token, Duration.ofSeconds(20), http);
+    }
+    private GitLabClient(String instance, String token, Duration timeout, HttpClient http) {
         this.instance = URI.create(normalizeInstance(instance)); this.token = Objects.requireNonNull(token); this.timeout = timeout;
         if (token.isBlank()) throw new IllegalArgumentException("请先配置 Token");
-        http = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER).build();
+        if (http.followRedirects() != HttpClient.Redirect.NEVER) throw new IllegalArgumentException("GitLab 客户端必须禁用自动重定向");
+        this.http = http;
+    }
+    public static HttpClient.Builder clientBuilder(Duration timeout) {
+        HttpClient.Builder builder = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER);
+        ProxySelector proxy = ProxySelector.getDefault();
+        if (proxy != null) builder.proxy(proxy);
+        return builder;
     }
     public static String normalizeInstance(String value) {
-        URI uri = URI.create(value.trim());
+        URI uri;
+        try { uri = URI.create(value.trim()); }
+        catch (IllegalArgumentException error) { throw new IllegalArgumentException("GitLab 地址格式不正确，例如 https://gitlab.company.com"); }
         if (!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) throw new IllegalArgumentException("请填写不含凭据、查询参数的 GitLab HTTP(S) 网页地址");
-        return uri.toString().replaceAll("/+$", "");
+        return uri.toString().replaceAll("/+$", "").replaceFirst("/api/v4$", "");
     }
     public static String enc(String value) { return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20"); }
     private Response request(String method, String path, JsonObject body) {
@@ -50,14 +68,42 @@ public final class GitLabClient {
         else builder.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body.toString()));
         try {
             HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) throw new ApiException("GitLab 请求失败（HTTP " + response.statusCode() + "），请核对权限或远程状态", response.statusCode());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) throw new ApiException(httpError(response.statusCode(), path), response.statusCode());
             JsonElement data;
-            try { data = JsonParser.parseString(response.body()); }
-            catch (RuntimeException error) { throw new ApiException("GitLab 返回无效数据；写入操作请核对远程结果", 0); }
+            try {
+                data = JsonParser.parseString(response.body());
+                if (!data.isJsonObject() && !data.isJsonArray()) throw new IllegalArgumentException();
+            }
+            catch (RuntimeException error) { throw new ApiException("GitLab 未返回有效 JSON，请检查实例地址、反向代理或 SSO 是否将 API 请求转到了登录页面" + writeHint(method), 0); }
             String next = response.headers().firstValue("X-Next-Page").orElse(null);
             return new Response(data, next == null ? -1 : next.isBlank() ? 0 : Integer.parseInt(next));
         } catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new ApiException("操作已取消；写入结果请核对远程状态", 0); }
-        catch (java.io.IOException error) { throw new ApiException("GitLab 连接失败或超时；写入结果可能未确认，请核对远程状态", 0); }
+        catch (java.io.IOException error) { throw new ApiException(networkError(error) + writeHint(method), 0); }
+    }
+    private static String writeHint(String method) { return method.equals("GET") ? "" : "；写入结果未确认，请先核对远程状态，不要重复创建"; }
+    private String httpError(int status, String path) {
+        String reason = switch (status) {
+            case 401 -> "Token 无效或已过期，请使用 Personal Access Token，并检查 api 权限";
+            case 403 -> "账号或 Token 无访问权限，请检查 api 权限、项目成员身份及公司访问策略";
+            case 404 -> path.startsWith("/projects/") ? "项目或接口不存在，或账号无权访问；请核对项目路径及 GitLab 版本" : "API 地址不存在，请填写 GitLab 实例地址（保留部署子路径）";
+            case 407 -> "代理需要认证，请检查 IDEA 的 HTTP Proxy 设置及代理凭据";
+            case 429 -> "请求过于频繁，请稍后重试";
+            default -> status >= 300 && status < 400 ? "API 被重定向，请填写最终 GitLab 地址，并检查 HTTP/HTTPS、部署子路径及 SSO 配置（不会向重定向地址发送 Token）"
+                : status >= 500 ? "GitLab 或网关暂时不可用，请稍后重试" : "请核对请求参数、权限及远程状态";
+        };
+        return "GitLab HTTP " + status + "：" + reason;
+    }
+    static String networkError(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof javax.net.ssl.SSLException) return "HTTPS 证书校验失败，请在 IDEA 的 Server Certificates 中信任公司 CA，并检查证书域名与有效期";
+            if (cause instanceof HttpTimeoutException) return "GitLab 请求超时，请检查公司 VPN、IDEA HTTP Proxy 和服务器状态";
+            if (cause instanceof java.net.UnknownHostException || cause instanceof java.nio.channels.UnresolvedAddressException) return "无法解析 GitLab 或代理域名，请检查地址、公司 DNS 和 VPN";
+        }
+        return "无法连接 GitLab，请检查地址和端口、公司 VPN、IDEA HTTP Proxy 及防火墙";
+    }
+    public Repo testConnection(String projectPath) {
+        id(get("/user"), "id");
+        return project(projectPath);
     }
     private JsonObject get(String path) { return request("GET", path, null).data.getAsJsonObject(); }
     private Page<JsonObject> page(String path, int number) {
@@ -108,11 +154,17 @@ public final class GitLabClient {
     public Todos todos() {
         long user = id(get("/user"), "id");
         Map<String, Mr> details = new HashMap<>();
+        boolean approvalsComplete = true;
         List<Mr> reviews = new ArrayList<>(); Set<String> reviewed = new HashSet<>();
         for (JsonObject item : all("/merge_requests?scope=all&state=opened&reviewer_id=" + user)) {
             Mr value = mr(item); if (!reviewed.add(value.key())) continue; value = mr(value.project, value.iid); details.put(value.key(), value);
             if (!value.state.equals("opened")) continue;
-            JsonArray approved = get("/projects/" + value.project + "/merge_requests/" + value.iid + "/approvals").getAsJsonArray("approved_by");
+            JsonArray approved;
+            try { approved = get("/projects/" + value.project + "/merge_requests/" + value.iid + "/approvals").getAsJsonArray("approved_by"); }
+            catch (ApiException error) {
+                if (error.status != 403 && error.status != 404 && error.status != 405) throw error;
+                approvalsComplete = false; reviews.add(value); continue;
+            }
             if (approved == null) throw new IllegalStateException("审批状态不完整，不能确定待审批数量");
             boolean mine = false;
             for (JsonElement approval : approved) if (id(approval.getAsJsonObject().getAsJsonObject("user"), "id") == user) mine = true;
@@ -124,7 +176,7 @@ public final class GitLabClient {
             value = details.containsKey(value.key()) ? details.get(value.key()) : mr(value.project, value.iid);
             if (value.state.equals("opened")) authored.add(value);
         }
-        return new Todos(List.copyOf(authored), List.copyOf(reviews));
+        return new Todos(List.copyOf(authored), List.copyOf(reviews), approvalsComplete);
     }
     public void closeOriginal(Mr expected) {
         Mr current = mr(expected.project, expected.iid); sameVersion(expected, current);

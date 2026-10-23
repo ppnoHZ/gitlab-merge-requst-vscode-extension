@@ -8,6 +8,8 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.*;
 import com.intellij.util.concurrency.AppExecutorUtil;
+import com.intellij.util.net.ssl.CertificateManager;
+import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -17,7 +19,12 @@ import java.util.function.Consumer;
 
 @Service(Service.Level.PROJECT)
 public final class WorkbenchService implements Disposable {
-    public record Connection(String instance, String projectPath, String token) { public GitLabClient api() { return new GitLabClient(instance, token); } }
+    public record Connection(String instance, String projectPath, String token) {
+        public GitLabClient api() {
+            return new GitLabClient(instance, token, GitLabClient.clientBuilder(Duration.ofSeconds(20))
+                .sslContext(CertificateManager.getInstance().getSslContext()).build());
+        }
+    }
     private final Project project;
     private final ExecutorService executor = AppExecutorUtil.createBoundedApplicationPoolExecutor("GitLab Workbench", 2);
     private final ScheduledFuture<?> poll;
@@ -61,7 +68,7 @@ public final class WorkbenchService implements Disposable {
         WorkbenchSettings.Data data = settings().getState();
         synchronized (data) { data.instance = instance; data.projectPath = path; generation.incrementAndGet(); }
         todos = new GitLabClient.Todos(List.of(), List.of()); approvals = null; updated = ""; stale = true;
-        status = "连接已更新，正在加载…"; changed();
+        status = "配置已保存，正在加载 GitLab 数据…"; changed();
         refresh(false);
     }
     public void refresh(boolean interactive) {
@@ -78,12 +85,12 @@ public final class WorkbenchService implements Disposable {
             try {
                 if (expected != generation.get() || disposed || project.isDisposed()) return;
                 if (error == null) {
-                    todos = loaded; approvals = loaded.reviews().size(); stale = false;
+                    todos = loaded; approvals = loaded.approvalsComplete() ? loaded.reviews().size() : null; stale = false;
                     updated = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-                    status = "我提交 " + loaded.authored().size() + " · 待审批 " + approvals + " · 更新于 " + updated;
+                    status = "我提交 " + loaded.authored().size() + " · 待审批 " + (approvals == null ? "未确认（审批接口不可用）" : approvals) + " · 更新于 " + updated;
                 } else {
                     approvals = null; stale = true;
-                    status = error.getMessage() + (updated.isEmpty() ? "" : " · 保留 " + updated + " 的旧数据");
+                    status = error.getMessage() + " · 已保存的配置不会丢失" + (updated.isEmpty() ? "" : " · 保留 " + updated + " 的旧数据");
                     if (interactive) notifyError(error);
                 }
             } finally {

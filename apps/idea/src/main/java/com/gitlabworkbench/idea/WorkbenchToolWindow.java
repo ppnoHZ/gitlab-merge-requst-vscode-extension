@@ -85,6 +85,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             todoPanel.add(mrActions, BorderLayout.SOUTH); tabs.addTab("我的待办", todoPanel);
             add(tabs, BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
             service.subscribe(this::render, this); render();
+            if (!service.settings().getState().projectPath.isBlank()) loadBranches(false);
         }
         private JButton button(String label, Runnable action) {
             JButton button = new JButton(label); buttons.add(button);
@@ -101,7 +102,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             }
             if (displayed != service.todos) {
                 Todo selection = todoList.getSelectedValue(); displayed = service.todos; todos.clear();
-                displayed.reviews().forEach(mr -> todos.addElement(new Todo("待我审批", mr)));
+                displayed.reviews().forEach(mr -> todos.addElement(new Todo(displayed.approvalsComplete() ? "待我审批" : "指派给我（审批状态未确认）", mr)));
                 displayed.authored().forEach(mr -> todos.addElement(new Todo("我提交的", mr)));
                 if (selection != null) for (int i = 0; i < todos.size(); i++) if (todos.get(i).mr.key().equals(selection.mr.key()) && todos.get(i).category.equals(selection.category)) todoList.setSelectedIndex(i);
             }
@@ -111,17 +112,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private GitLabClient.Mr selected() { Todo value = todoList.getSelectedValue(); if (value == null) throw new IllegalStateException("请先选择 MR"); return value.mr; }
         private GitLabClient.Mr selectedFresh() { if (service.stale) throw new IllegalStateException("待办正在更新或显示旧数据，请刷新成功后重试"); return selected(); }
         private void configure() {
-            WorkbenchSettings.Data saved = service.settings().getState();
-            Fields dialog = new Fields(project, "GitLab 连接", new String[]{"GitLab 网页地址", "项目路径（group/project）", "Token（留空保留当前实例凭据）"}, new String[]{saved.instance, saved.projectPath, ""}, 2);
-            if (!dialog.showAndGet()) return;
-            String instance = GitLabClient.normalizeInstance(dialog.value(0)); String path = dialog.value(1).trim(); String entered = dialog.value(2).trim();
-            if (path.isBlank() || path.startsWith("/") || path.endsWith("/")) throw new IllegalArgumentException("请输入完整项目路径，例如 group/project");
-            run(() -> {
-                String token = entered.isBlank() ? service.settings().token(instance) : entered;
-                if (token == null || token.isBlank()) throw new IllegalArgumentException("请填写此实例的 Personal Access Token（api 权限）");
-                GitLabClient.Repo checked = new GitLabClient(instance, token).project(path);
-                service.settings().storeToken(instance, token); return checked;
-            }, value -> { service.configure(instance, path); branchStatus.setText("连接成功：" + value.path()); loadBranches(false); });
+            if (new ConnectionDialog(project, service).showAndGet()) loadBranches(false);
         }
         private void loadBranches(boolean append) {
             if (service.busy()) return;
