@@ -9,7 +9,7 @@ repositories {
     intellijPlatform { defaultRepositories() }
 }
 dependencies {
-    intellijPlatform { intellijIdeaCommunity("2026.2.3") }
+    intellijPlatform { intellijIdea("2026.2.3") }
     implementation(project(":core"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -25,7 +25,7 @@ intellijPlatform {
         id = "com.gitlabworkbench.idea"
         name = "GitLab Workbench"
         version = project.version.toString()
-        ideaVersion { sinceBuild = "243"; untilBuild = "261.*" }
+        ideaVersion { sinceBuild = "243"; untilBuild = "262.*" }
     }
 }
 tasks.test {
