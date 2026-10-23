@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     });
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-    for (const key of ['provider', 'githubApiUrl', 'instanceUrl', 'accessToken', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
+    for (const key of ['provider', 'githubApiUrl', 'instanceUrl', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
       'defaultReviewers', 'removeSourceBranch', 'squash', 'defaultTargetBranch']) {
       if (event.affectsConfiguration(`gitlabMr.${key}`)) {
         void Audit.event('config.observed', { setting: key, source: 'configuration' }, 'sensitive').catch(error => {
@@ -63,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     { dispose: invalidateRepositoryProviders },
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (['provider', 'instanceUrl', 'githubApiUrl', 'accessToken'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) invalidateRepositoryProviders();
+      if (['provider', 'instanceUrl', 'githubApiUrl'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) invalidateRepositoryProviders();
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(invalidateRepositoryProviders),
     context.secrets.onDidChange(event => {
@@ -79,7 +79,7 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(approvalStatus,
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (['provider', 'instanceUrl', 'githubApiUrl', 'accessToken', 'approvalRefreshSeconds'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) approvalStatus.invalidate();
+      if (['provider', 'instanceUrl', 'githubApiUrl', 'approvalRefreshSeconds'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) approvalStatus.invalidate();
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => approvalStatus.invalidate()),
     context.secrets.onDidChange(() => approvalStatus.invalidate())
@@ -128,7 +128,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (event.visible && !overview.snapshot) void refreshOverview();
     }),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+      if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl')) {
         overview.invalidate();
       }
     }),
@@ -245,7 +245,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
   const pendingConnectionChanged = vscode.workspace.onDidChangeConfiguration(event => {
-    if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl') || event.affectsConfiguration('gitlabMr.accessToken')) {
+    if (event.affectsConfiguration('gitlabMr.provider') || event.affectsConfiguration('gitlabMr.githubApiUrl') || event.affectsConfiguration('gitlabMr.instanceUrl')) {
       pendingReviews.reset();
       pendingTreeView.description = undefined;
       if (pendingTreeView.visible) {
@@ -407,6 +407,14 @@ export async function activate(context: vscode.ExtensionContext) {
     debugLog('触发设置 Token 操作');
     await tokenManager.promptForToken(await currentConnection());
   });
+  const clearTokenCmd = registerCommand('gitlabMr.clearToken', async () => {
+    const connection = await currentConnection();
+    const confirmation = await vscode.window.showWarningMessage(
+      `确定清除 ${connection.instanceUrl} 的 Access Token？`, { modal: true }, '清除 Token');
+    if (confirmation !== '清除 Token') return;
+    await tokenManager.clearToken(connection);
+    vscode.window.showInformationMessage('Access Token 已从 VS Code 安全存储中清除。');
+  });
 
   // 4. 注册创建 Merge Request 命令
   const createMrCmd = registerCommand('gitlabMr.createMergeRequest', async () => {
@@ -566,6 +574,7 @@ export async function activate(context: vscode.ExtensionContext) {
     configureInstanceUrlCmd,
     showLogsCmd,
     setTokenCmd,
+    clearTokenCmd,
     createMrCmd,
     checkReleaseCmd,
     refreshReleaseCmd,

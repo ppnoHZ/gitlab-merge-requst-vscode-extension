@@ -51,14 +51,12 @@ pnpm run package:vsix
 2. 搜索 **GitLab MR: Set Access Token**。
 3. 输入具有 `api` 权限的 Token，回车保存。
 
-也可在设置中的 `gitlabMr.accessToken` 填写 Token。
-
 **凭据注意事项：**
 
-- 当前“Set Access Token”命令同时将 Token 写入 VS Code SecretStorage 和用户设置。
-- 读取时优先使用 `gitlabMr.accessToken` 设置值，其次读取 SecretStorage。
-- 不要把 Token 写入仓库内会被提交的配置，也不要分享包含 Token 的设置截图或日志。
-- 更换 Token 时可重新执行该命令；遇到过期或权限问题，应先在 GitLab 检查 Token。
+- Token 只写入 VS Code SecretStorage，不会写入用户设置、工作区设置或仓库文件。底层由系统凭据库或当前 VS Code 运行环境的安全存储管理。
+- 升级旧版本时，插件会先把旧 `gitlabMr.accessToken` 迁移到 SecretStorage，成功后清除用户、工作区和工作区文件夹范围内的明文配置。
+- Token 按 GitLab 实例隔离。更换 Token 时重新执行 **Set Access Token**；清除时执行 **Clear Access Token**。
+- Remote SSH、容器或 Codespaces 窗口使用各自运行环境的 SecretStorage，首次进入新的运行环境可能需要重新录入。
 
 ### 3. 打开 GitLab 工作台
 
@@ -388,7 +386,6 @@ release 检查结果中的 feature 分支支持工单链接：
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `gitlabMr.instanceUrl` | `https://gitlab.com` | GitLab 实例地址 |
-| `gitlabMr.accessToken` | 空 | API Token，勿提交到仓库 |
 | `gitlabMr.defaultTargetBranch` | `master` | 默认目标；参与推荐排序，不强制使用 |
 | `gitlabMr.hideNonConformingTargetBranches` | `true` | 目标选择时隐藏不符合内置合并规则的分支；关闭后恢复全部候选 |
 | `gitlabMr.defaultReviewers` | `[]` | Reviewer 用户名列表，不需要 `@` |

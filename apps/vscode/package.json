@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -20,6 +20,7 @@
   "activationEvents": [
     "onCommand:gitlabMr.createMergeRequest",
     "onCommand:gitlabMr.setToken",
+    "onCommand:gitlabMr.clearToken",
     "onCommand:gitlabMr.openSettings",
     "onCommand:gitlabMr.configureInstanceUrl",
     "onCommand:gitlabMr.showLogs",
@@ -248,7 +249,12 @@
       },
       {
         "command": "gitlabMr.setToken",
-        "title": "Set Access Token (快速录入 Token)",
+        "title": "Set Access Token (安全保存 / 更新 Token)",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.clearToken",
+        "title": "Clear Access Token (清除已保存 Token)",
         "category": "GitLab MR"
       },
       {
@@ -304,18 +310,11 @@
       "title": "GitLab Auto MR 配置",
       "order": 1,
       "properties": {
-        "gitlabMr.accessToken": {
-          "type": "string",
-          "default": "",
-          "description": "旧版 GitLab Token 配置，仅用于兼容迁移。新 Token 请使用“快速录入 Token”命令，按平台和实例保存至 SecretStorage。",
-          "order": 1,
-          "deprecationMessage": "请使用快速录入 Token 命令安全保存。"
-        },
         "gitlabMr.instanceUrl": {
           "type": "string",
           "default": "https://gitlab.com",
           "markdownDescription": "代码托管平台网页地址，不含 API 路径。默认值下从 origin 自动识别地址。GitHub Enterprise 请同时将 provider 设为 github。",
-          "order": 2
+          "order": 1
         },
         "gitlabMr.issueLinks": {
           "type": "array",
