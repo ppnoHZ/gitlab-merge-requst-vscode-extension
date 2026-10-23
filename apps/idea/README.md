@@ -41,6 +41,6 @@ node scripts/idea.mjs buildPlugin
 
 `core` 子项目不依赖 IDEA SDK，可独立测试分支规范、分页、凭据发送、审批过滤、SHA 校验、未知创建结果核对、compare、MR 参数、HTTP 超时及拒绝重定向。与 VS Code 共用 `packages/contract-tests/branch-names.json`，确保规范一致。
 
-当前开发环境的 JetBrains SDK 下载被网络代理以 HTTP 403 拒绝，因此本地尚未完成完整插件编译/IDE 沙箱验证，未生成已验证的安装包。请以 CI 成功的构建产物为准；真实公司 GitLab 的权限、证书、代理及 IDEA UI 仍需联调。
+当前开发环境的 JetBrains SDK 下载被网络代理以 HTTP 403 拒绝；完整插件编译、打包和项目配置检查已改由 GitHub Actions 执行并通过，安装包位于成功运行的 Artifacts。当前未进行 IDE 沙箱交互及真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
 
 插件保持标准 TLS 证书校验，不禁用 HTTPS 校验。企业自签 CA 需通过受信任的 JVM/企业证书配置接入。连接不自动跟随重定向，避免将 Token 发往其他实例。

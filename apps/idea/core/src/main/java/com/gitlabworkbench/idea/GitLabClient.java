@@ -98,8 +98,8 @@ public final class GitLabClient {
             Ref result = ref(request("POST", "/projects/" + project + "/repository/branches", body).data.getAsJsonObject());
             if (!result.name.equals(name) || !result.sha.equals(expectedSha)) throw new ApiException("创建结果未确认", 0);
             return result;
-        } catch (ApiException error) {
-            if (error.status != 0 && error.status < 500 && error.status != 408) throw error;
+        } catch (RuntimeException error) {
+            if (error instanceof ApiException apiError && apiError.status != 0 && apiError.status < 500 && apiError.status != 408) throw error;
             try { Ref actual = ref(project, "branch", name); if (actual.sha.equals(expectedSha)) return actual; } catch (RuntimeException ignored) {}
             throw new IllegalStateException("创建结果尚未确认，请查询同名分支后再操作，不要重复创建");
         }

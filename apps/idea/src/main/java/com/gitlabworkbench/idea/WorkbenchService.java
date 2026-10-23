@@ -37,11 +37,12 @@ public final class WorkbenchService implements Disposable {
     public WorkbenchSettings settings() { return project.getService(WorkbenchSettings.class); }
     public Connection connection() {
         WorkbenchSettings.Data data = settings().getState();
-        String instance = GitLabClient.normalizeInstance(data.instance);
-        if (data.projectPath.isBlank()) throw new IllegalStateException("请先配置项目路径，例如 group/project");
+        final String instance, projectPath;
+        synchronized (data) { instance = GitLabClient.normalizeInstance(data.instance); projectPath = data.projectPath.trim(); }
+        if (projectPath.isBlank()) throw new IllegalStateException("请先配置项目路径，例如 group/project");
         String token = settings().token(instance);
         if (token == null || token.isBlank()) throw new IllegalStateException("请先在连接设置中保存 Token");
-        return new Connection(instance, data.projectPath.trim(), token);
+        return new Connection(instance, projectPath, token);
     }
     public boolean busy() { return operation.get(); }
     public void subscribe(Runnable listener, Disposable owner) {
@@ -57,9 +58,8 @@ public final class WorkbenchService implements Disposable {
         });
     }
     public void configure(String instance, String path) {
-        generation.incrementAndGet();
-        settings().getState().instance = instance;
-        settings().getState().projectPath = path;
+        WorkbenchSettings.Data data = settings().getState();
+        synchronized (data) { data.instance = instance; data.projectPath = path; generation.incrementAndGet(); }
         todos = new GitLabClient.Todos(List.of(), List.of()); approvals = null; updated = ""; stale = true;
         status = "连接已更新，正在加载…"; changed();
         refresh(false);
@@ -69,17 +69,23 @@ public final class WorkbenchService implements Disposable {
         long expected = generation.get();
         status = updated.isEmpty() ? "正在加载待办…" : "正在更新，保留 " + updated + " 的旧数据…"; stale = true; changed();
         executor.submit(() -> {
+            try { completeRefresh(expected, connection().api().todos(), null, interactive); }
+            catch (RuntimeException error) { completeRefresh(expected, null, error, interactive); }
+        });
+    }
+    private void completeRefresh(long expected, GitLabClient.Todos loaded, RuntimeException error, boolean interactive) {
+        ApplicationManager.getApplication().invokeLater(() -> {
             try {
-                GitLabClient.Todos loaded = connection().api().todos();
-                if (expected != generation.get() || disposed) return;
-                todos = loaded; approvals = loaded.reviews().size(); stale = false;
-                updated = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-                status = "我提交 " + loaded.authored().size() + " · 待审批 " + approvals + " · 更新于 " + updated;
-            } catch (RuntimeException error) {
-                if (expected != generation.get() || disposed) return;
-                approvals = null; stale = true;
-                status = error.getMessage() + (updated.isEmpty() ? "" : " · 保留 " + updated + " 的旧数据");
-                if (interactive) notifyError(error);
+                if (expected != generation.get() || disposed || project.isDisposed()) return;
+                if (error == null) {
+                    todos = loaded; approvals = loaded.reviews().size(); stale = false;
+                    updated = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+                    status = "我提交 " + loaded.authored().size() + " · 待审批 " + approvals + " · 更新于 " + updated;
+                } else {
+                    approvals = null; stale = true;
+                    status = error.getMessage() + (updated.isEmpty() ? "" : " · 保留 " + updated + " 的旧数据");
+                    if (interactive) notifyError(error);
+                }
             } finally {
                 refreshing.set(false); changed();
                 if (expected != generation.get() && !disposed) refresh(false);
