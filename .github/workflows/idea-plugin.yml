@@ -27,7 +27,19 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration --no-daemon
+      - name: Build and test
+        run: |
+          mkdir -p build
+          set -o pipefail
+          ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration --no-daemon 2>&1 | tee build/ci-build.log
+      - name: Build diagnostics
+        if: always()
+        run: |
+          if [ -f build/ci-build.log ]; then
+            printf '```text\n' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 160 build/ci-build.log >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: gitlab-workbench-idea
