@@ -25,7 +25,7 @@ intellijPlatform {
         id = "com.gitlabworkbench.idea"
         name = "GitLab Workbench"
         version = project.version.toString()
-        ideaVersion { sinceBuild = "243"; untilBuild = "261.*" }
+        ideaVersion { sinceBuild = "243"; untilBuild = "262.*" }
     }
 }
 tasks.test {

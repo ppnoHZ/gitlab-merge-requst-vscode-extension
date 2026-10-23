@@ -1,6 +1,6 @@
 # GitLab Workbench for IntelliJ IDEA
 
-面向自建 GitLab 的远程分支和 MR 工作台。使用 Java 25 和 IntelliJ Platform SDK，以当前最新稳定版 IntelliJ IDEA 2026.2.3（261 系列）构建；插件字节码保持 Java 21，兼容范围为 IntelliJ Platform 243 至 261 系列。其他 JetBrains 产品需另行验证，不声明已兼容。
+面向自建 GitLab 的远程分支和 MR 工作台。使用 Java 25 和 IntelliJ Platform SDK，以当前最新稳定版 IntelliJ IDEA 2026.2.3（262 系列）构建；插件字节码保持 Java 21，兼容范围为 IntelliJ Platform 243 至 262 系列。其他 JetBrains 产品需另行验证，不声明已兼容。
 
 ## 功能
 
