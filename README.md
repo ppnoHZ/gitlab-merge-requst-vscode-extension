@@ -63,6 +63,8 @@ pnpm run package:vsix
 
 VSIX 输出到 `apps/vscode/`，构建时将共享核心打入扩展 bundle，不需要额外安装共享包。扩展功能说明见 [扩展 README](apps/vscode/README.md) 和 [用户指南](apps/vscode/USER_GUIDE.md)。
 
+GitHub Actions 的 **VS Code extension** 工作流会在扩展、共享核心或相关依赖配置变更时运行发布前测试并打包 VSIX；也可在 Actions 页面手动运行。成功后从工作流运行页面的 `gitlab-workbench-vscode` Artifact 下载 `.vsix` 安装包。
+
 VSIX 发布前只执行扩展的 `test:publish` 本地逻辑测试和类型检查，不运行网络请求相关测试（包括 mock 接口测试）。完整扩展单元测试仍可通过 `pnpm --filter gitlab-auto-merge-request test` 手动执行；HTTP/Git 集成测试使用独立的 `pnpm run test:integration`。
 
 ## 约定
@@ -78,4 +80,4 @@ Web 已支持新建 release 和 hotfix，包含分支/Tag 基线选择、SHA 预
 
 ## IntelliJ IDEA 插件
 
-新增独立 Gradle 工程 [`apps/idea`](apps/idea/README.md)，提供自建 GitLab 的远程分支与 MR 工作台。构建使用 JDK 21：`node scripts/idea.mjs buildPlugin`；业务测试：`node scripts/idea.mjs :core:test`。IDEA 工程不参与现有 pnpm 递归构建，VS Code/Web 链路保持独立。
+新增独立 Gradle 工程 [`apps/idea`](apps/idea/README.md)，提供自建 GitLab 的远程分支与 MR 工作台。构建使用 JDK 25：`node scripts/idea.mjs buildPlugin`；业务测试：`node scripts/idea.mjs :core:test`。IDEA 工程不参与现有 pnpm 递归构建，VS Code/Web 链路保持独立。

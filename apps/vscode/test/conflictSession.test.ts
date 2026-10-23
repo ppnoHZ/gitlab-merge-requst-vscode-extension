@@ -34,13 +34,15 @@ async function run() {
     await assert.rejects(ensureIdle(root), /未提交/);
     GitService.prototype.getRepoInfo = async () => ({ rootPath: root, remoteUrl: remote, sourceBranch: 'main', gitlabHost: 'gitlab.test', projectPath: 'g/p' });
     (GitLabService.prototype as any).getBranchCreationRef = async (_project: number, _kind: string, name: string) => {
-      try { return { name, sha: await conflictGit(remote, ['rev-parse', '--verify', `refs/heads/${name}`]), title: '' }; }
-      catch { throw new AuditApiError('not found', 404); }
+      const ref = await conflictGit(root, ['ls-remote', '--heads', 'origin', `refs/heads/${name}`]);
+      const sha = ref.split(/\s+/)[0];
+      if (!sha) throw new AuditApiError(`not found: ${name}`, 404);
+      return { name, sha, title: '' };
     };
     (GitLabService.prototype as any).closeConflictOriginal = async () => { closes++; };
     (GitLabService.prototype as any).createRemoteBranch = async (_p: number, name: string, _kind: string, _base: string, sha: string) => {
       if (failCreation) { failCreation = false; throw new Error('temporary network failure'); }
-      await conflictGit(remote, ['update-ref', `refs/heads/${name}`, sha]);
+      await conflictGit(root, ['push', 'origin', `${sha}:refs/heads/${name}`]);
       return { ref: { name, sha, title: '' }, recovered: false };
     };
     (GitLabService.prototype as any).getMergeRequestsTargetingBranch = async () => ({ items: creates ? [{ iid: 9, source_branch: 'conflict/release/1', target_branch: 'tst', state: 'opened', web_url: 'https://gitlab.test/g/p/9' }] : [], hasMore: false });
@@ -65,8 +67,8 @@ async function run() {
     assert.equal(session().stage, 'mr'); assert.equal(creates, 1);
     assert(description.includes('原冲突 MR：https://gitlab.test/g/p/1'));
     assert(description.includes('file.txt')); assert(description.includes('分支信息'));
-    assert.equal(await conflictGit(remote, ['rev-parse', 'refs/heads/tst']), targetSha);
-    assert.equal(await conflictGit(remote, ['rev-parse', 'refs/heads/release/1']), sourceSha);
+    assert.equal((await conflictGit(root, ['ls-remote', '--heads', 'origin', 'refs/heads/tst'])).split(/\s+/)[0], targetSha);
+    assert.equal((await conflictGit(root, ['ls-remote', '--heads', 'origin', 'refs/heads/release/1'])).split(/\s+/)[0], sourceSha);
     await new ConflictSessions(state, tokens).resume(); assert.equal(creates, 1);
     const saved = session(); saved.stage = 'mrCreating'; saved.mr = undefined;
     await new ConflictSessions(state, tokens).resume(); assert.equal(creates, 1); // lost response recovered from existing MR
