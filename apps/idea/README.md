@@ -1,6 +1,6 @@
 # GitLab Workbench for IntelliJ IDEA
 
-面向自建 GitLab 的远程分支和 MR 工作台。第一版使用 Java 21 和 IntelliJ Platform SDK，目标为 IntelliJ IDEA 2024.3（243 系列）。其他 IDEA 版本及 JetBrains 产品需另行验证，不声明已兼容。
+面向自建 GitLab 的远程分支和 MR 工作台。使用 Java 25 和 IntelliJ Platform SDK，以当前最新稳定版 IntelliJ IDEA 2026.2.3（261 系列）构建；插件字节码保持 Java 21，兼容范围为 IntelliJ Platform 243 至 261 系列。其他 JetBrains 产品需另行验证，不声明已兼容。
 
 ## 功能
 
@@ -20,7 +20,7 @@
 
 ## 构建、测试与安装
 
-需要 **JDK 21**（含 javac），以及可以访问 Maven Central、Gradle 和 JetBrains SDK 仓库的网络。
+需要 **JDK 25**（含 javac），以及可以访问 Maven Central、Gradle 和 JetBrains SDK 仓库的网络。构建使用 Gradle 9.1.0 和 IntelliJ Platform Gradle Plugin 2.19.0。
 
 ```sh
 # 在仓库根目录
