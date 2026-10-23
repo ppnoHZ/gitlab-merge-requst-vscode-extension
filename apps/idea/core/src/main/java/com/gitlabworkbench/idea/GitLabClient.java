@@ -45,6 +45,7 @@ public final class GitLabClient {
     private GitLabClient(String instance, String token, Duration timeout, HttpClient http) {
         this.instance = URI.create(normalizeInstance(instance)); this.token = Objects.requireNonNull(token); this.timeout = timeout;
         if (token.isBlank()) throw new IllegalArgumentException("请先配置 Token");
+        if (token.chars().anyMatch(c -> c <= 32 || c >= 127)) throw new IllegalArgumentException("Token 含空白或非法字符，请重新复制完整的 Personal Access Token");
         if (http.followRedirects() != HttpClient.Redirect.NEVER) throw new IllegalArgumentException("GitLab 客户端必须禁用自动重定向");
         this.http = http;
     }

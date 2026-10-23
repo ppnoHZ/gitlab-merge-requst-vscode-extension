@@ -9,7 +9,12 @@ repositories {
     intellijPlatform { defaultRepositories() }
 }
 dependencies {
-    intellijPlatform { intellijIdea("2026.2.3"); bundledPlugin("Git4Idea") }
+    intellijPlatform {
+        intellijIdea("2026.2.3")
+        bundledPlugin("Git4Idea")
+        bundledModule("intellij.platform.vcs.dvcs")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
+    }
     implementation(project(":core"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

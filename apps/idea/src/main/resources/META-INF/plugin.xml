@@ -4,6 +4,7 @@
   <vendor url="https://github.com/ppnoHZ/gitlab-merge-requst-vscode-extension">GitLab Workbench</vendor>
   <description><![CDATA[GitLab 远程分支与 Merge Request 工作台：分支搜索、release/hotfix 创建、我的待办、审批计数、conflict 分支及替代 MR。凭据使用 IDE PasswordSafe，本地 Git 操作交给 IDE。]]></description>
   <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.vcs</depends>
   <depends>Git4Idea</depends>
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow id="GitLab Workbench" anchor="right" factoryClass="com.gitlabworkbench.idea.WorkbenchToolWindow"/>

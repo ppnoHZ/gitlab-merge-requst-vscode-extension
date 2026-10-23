@@ -28,7 +28,8 @@ final class ConnectionDialog extends DialogWrapper {
     }
     private final JComboBox<Remote> remotes = new JComboBox<>();
     private final JButton useRemote = new JButton("从 remote 填入");
-    private boolean busy, closed;
+    private boolean busy, saving, closed;
+    private java.util.concurrent.Future<?> pending;
 
     ConnectionDialog(Project project, WorkbenchService service) {
         super(project);
@@ -102,7 +103,7 @@ final class ConnectionDialog extends DialogWrapper {
         if (busy) return;
         try {
             ConnectionProfile profile = profile(); String entered = enteredToken();
-            background("正在验证 Token 和项目访问权限…", () -> {
+            background(false, "正在验证 Token 和项目访问权限…", () -> {
                 String secret = entered.isBlank() ? service.settings().token(profile.instance()) : entered;
                 if (secret == null || secret.isBlank()) throw new IllegalArgumentException("该 GitLab 地址没有已保存的 Token，请填写 Personal Access Token（api 权限）");
                 return new WorkbenchService.Connection(profile.instance(), profile.projectPath(), secret).api().testConnection(profile.projectPath());
@@ -114,7 +115,7 @@ final class ConnectionDialog extends DialogWrapper {
         if (busy) return;
         try {
             ConnectionProfile profile = profile(); String entered = enteredToken();
-            background("正在保存配置和凭据…", () -> {
+            background(true, "正在保存配置和凭据…", () -> {
                 // PasswordSafe must run off the UI thread. Blank never erases a saved credential.
                 if (!entered.isBlank()) service.settings().storeToken(profile.instance(), entered);
                 return profile;
@@ -126,10 +127,10 @@ final class ConnectionDialog extends DialogWrapper {
         } catch (RuntimeException error) { showError(error); }
     }
 
-    private <T> void background(String message, Callable<T> work, Consumer<T> success) {
-        busy = true; setErrorText(null); feedback.setText(message); enableInputs(false);
+    private <T> void background(boolean saving, String message, Callable<T> work, Consumer<T> success) {
+        busy = true; this.saving = saving; setErrorText(null); feedback.setText(message); enableInputs(false);
         ModalityState modality = ModalityState.stateForComponent(panel);
-        AppExecutorUtil.getAppExecutorService().submit(() -> {
+        pending = AppExecutorUtil.getAppExecutorService().submit(() -> {
             T result = null; Exception failure = null;
             try { result = work.call(); } catch (Exception error) { failure = error; }
             T value = result; Exception error = failure;
@@ -144,9 +145,13 @@ final class ConnectionDialog extends DialogWrapper {
     private void enableInputs(boolean enabled) {
         instance.setEnabled(enabled); path.setEnabled(enabled); token.setEnabled(enabled); test.setEnabled(enabled);
         remotes.setEnabled(enabled); useRemote.setEnabled(enabled && remotes.getItemCount() > 0);
-        setOKActionEnabled(enabled); getCancelAction().setEnabled(enabled);
+        setOKActionEnabled(enabled); getCancelAction().setEnabled(enabled || !saving);
     }
-    @Override public void doCancelAction() { if (!busy) super.doCancelAction(); }
+    @Override public void doCancelAction() {
+        if (busy && saving) return;
+        if (pending != null) pending.cancel(true);
+        super.doCancelAction();
+    }
     private void showError(Exception error) {
         feedback.setText("操作未完成，当前输入已保留，可修改后重试。");
         setErrorText(error.getMessage() == null ? "操作失败，请检查 IDEA 日志和 PasswordSafe 设置。" : error.getMessage());

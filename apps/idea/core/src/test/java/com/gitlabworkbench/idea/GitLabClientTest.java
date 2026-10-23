@@ -84,6 +84,8 @@ class GitLabClientTest {
         assertEquals(List.of("/api/v4/user"), paths);
     }
     @Test void errorsExplainWhatToFixWithoutEchoingServerSecrets() {
+        var invalid = assertThrows(IllegalArgumentException.class, () -> new GitLabClient(base, "test-token\nsecret"));
+        assertFalse(invalid.getMessage().contains("secret"));
         Map<Integer, String> cases = Map.of(401, "Token", 403, "权限", 404, "项目", 407, "代理", 429, "频繁", 502, "网关");
         cases.forEach((code, hint) -> {
             mode = "http-" + code;
