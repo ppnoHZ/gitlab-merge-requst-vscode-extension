@@ -75,3 +75,7 @@ VSIX 发布前只执行扩展的 `test:publish` 本地逻辑测试和类型检�
 ### 新建发布分支
 
 Web 已支持新建 release 和 hotfix，包含分支/Tag 基线选择、SHA 预览确认、重名/基线变化校验、超时结果核对与创建审计。默认只读；启用方式见 [Web 开发说明](docs/web-development.md#新建-release--hotfix)。公司 OAuth 字段仍预留为空，未进行真实公司实例创建操作。
+
+## IntelliJ IDEA 插件
+
+新增独立 Gradle 工程 [`apps/idea`](apps/idea/README.md)，提供自建 GitLab 的远程分支与 MR 工作台。构建使用 JDK 21：`node scripts/idea.mjs buildPlugin`；业务测试：`node scripts/idea.mjs :core:test`。IDEA 工程不参与现有 pnpm 递归构建，VS Code/Web 链路保持独立。

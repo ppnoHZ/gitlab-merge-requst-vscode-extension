@@ -1,0 +1,39 @@
+name: IDEA plugin
+on:
+  push:
+    paths:
+      - 'apps/idea/**'
+      - 'packages/contract-tests/**'
+      - '.github/workflows/idea-plugin.yml'
+  pull_request:
+    paths:
+      - 'apps/idea/**'
+      - 'packages/contract-tests/**'
+      - '.github/workflows/idea-plugin.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/idea
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitlab-workbench-idea
+          path: apps/idea/build/distributions/*.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: idea-test-results
+          path: apps/idea/core/build/reports/tests/test

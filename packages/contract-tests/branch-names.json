@@ -1,0 +1,17 @@
+[
+  {"kind":"release","version":"LI2500076","expected":"release/LI2500076"},
+  {"kind":"release","version":" 1.2.3 ","expected":"release/1.2.3"},
+  {"kind":"hotfix","version":"H20260706","issue":"FOC-0009","expected":"hotfix/H20260706/FOC-0009"},
+  {"kind":"hotfix","version":"v1","issue":"FOC-9","description":"fix-login","expected":"hotfix/v1/FOC-9-fix-login"},
+  {"kind":"conflict","source":"release/LI2500076","target":"tst","expected":"conflict/release/LI2500076"},
+  {"kind":"conflict","source":"hotfix/H20260706/FOC-0009","target":"uat","expected":"conflict/hotfix/H20260706/FOC-0009"},
+  {"kind":"release","version":"../main","invalid":true},
+  {"kind":"release","version":"v1.lock","invalid":true},
+  {"kind":"release","version":"v1.","invalid":true},
+  {"kind":"hotfix","version":"v1","issue":"","invalid":true},
+  {"kind":"hotfix","version":"v1","issue":"FOC-9","description":"Upper Case","invalid":true},
+  {"kind":"conflict","source":"main","invalid":true},
+  {"kind":"conflict","source":"release//v1","invalid":true},
+  {"kind":"conflict","source":"release/v1","target":"main","invalid":true},
+  {"kind":"conflict","source":"hotfix/v1","invalid":true}
+]

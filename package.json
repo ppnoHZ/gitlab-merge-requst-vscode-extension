@@ -17,7 +17,9 @@
     "dev:web": "pnpm run build:core && pnpm --filter @gitlab-workbench/web dev",
     "dev:api": "pnpm run build:core && pnpm --filter @gitlab-workbench/api dev",
     "build:extension": "pnpm run build:core && pnpm --filter gitlab-auto-merge-request build",
-    "package:vsix": "pnpm run build:core && pnpm --filter gitlab-auto-merge-request package:vsix"
+    "package:vsix": "pnpm run build:core && pnpm --filter gitlab-auto-merge-request package:vsix",
+    "build:idea": "node scripts/idea.mjs buildPlugin",
+    "test:idea": "node scripts/idea.mjs :core:test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
