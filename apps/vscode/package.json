@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -21,6 +21,7 @@
     "onCommand:gitlabMr.createMergeRequest",
     "onCommand:gitlabMr.setToken",
     "onCommand:gitlabMr.clearToken",
+    "onCommand:gitlabMr.openGettingStarted",
     "onCommand:gitlabMr.openSettings",
     "onCommand:gitlabMr.configureInstanceUrl",
     "onCommand:gitlabMr.showLogs",
@@ -258,6 +259,11 @@
         "category": "GitLab MR"
       },
       {
+        "command": "gitlabMr.openGettingStarted",
+        "title": "Getting Started (打开功能引导)",
+        "category": "GitLab MR"
+      },
+      {
         "command": "gitlabMr.mergePendingReview",
         "title": "Merge MR Now (立即合并 MR)",
         "category": "GitLab MR",
@@ -303,6 +309,57 @@
         "command": "gitlabMr.showApprovalInbox",
         "title": "查看待我审批的 MR",
         "category": "GitLab MR"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "gitlabWorkbenchGettingStarted",
+        "title": "开始使用 GitLab 工作台",
+        "description": "用几分钟完成连接配置，并认识分支、MR、冲突处理和操作审计。",
+        "steps": [
+          {
+            "id": "connectGitLab",
+            "title": "连接公司 GitLab",
+            "description": "打开一个包含 Git remote 的项目。插件会从 `origin` 识别 GitLab 地址和项目路径；如需修改，可[打开 GitLab 地址设置](command:gitlabMr.configureInstanceUrl)。",
+            "media": { "image": "media/getting-started.svg", "altText": "GitLab 工作台主要功能流程" },
+            "completionEvents": ["onCommand:gitlabMr.configureInstanceUrl"]
+          },
+          {
+            "id": "saveToken",
+            "title": "安全保存 Access Token",
+            "description": "准备具有 `api` 权限的 GitLab Personal Access Token，然后[安全保存 Token](command:gitlabMr.setToken)。Token 只写入 VS Code SecretStorage，不进入项目配置。",
+            "media": { "image": "media/getting-started.svg", "altText": "Token 通过 SecretStorage 安全保存" },
+            "completionEvents": ["onCommand:gitlabMr.setToken"]
+          },
+          {
+            "id": "manageBranches",
+            "title": "浏览和创建规范分支",
+            "description": "[打开分支管理](command:gitlabMr.checkReleaseReadiness)，搜索远程分支并查看合并状态。这里也可以创建 `release`、`hotfix` 和 `conflict` 分支。",
+            "media": { "image": "media/getting-started.svg", "altText": "分支管理与创建流程" },
+            "completionEvents": ["onCommand:gitlabMr.checkReleaseReadiness"]
+          },
+          {
+            "id": "reviewMergeRequests",
+            "title": "处理我的 MR 待办",
+            "description": "[打开我的待办](command:gitlabMr.showApprovalInbox)，查看我提交和待我审批的 MR。可在 VS Code 查看文件差异，冲突 MR 会显示红色标记。",
+            "media": { "image": "media/getting-started.svg", "altText": "我的待办与 MR 审阅" },
+            "completionEvents": ["onCommand:gitlabMr.showApprovalInbox"]
+          },
+          {
+            "id": "releaseAndConflicts",
+            "title": "掌握上线总览和冲突流程",
+            "description": "[刷新上线总览](command:gitlabMr.refreshReleaseOverview)了解版本风险。遇到冲突时，从红色 MR 创建 `conflict/<原分支>`，本地解决并推送后继续创建替代 MR。",
+            "media": { "image": "media/getting-started.svg", "altText": "上线总览和 conflict 分支流程" },
+            "completionEvents": ["onCommand:gitlabMr.refreshReleaseOverview"]
+          },
+          {
+            "id": "auditOperations",
+            "title": "检查敏感操作记录",
+            "description": "[打开操作审计](command:gitlabMr.auditHistory.focus)，查看创建 MR、批准、合并、删除分支和 Token 操作记录。日志不会保存 Token 或代码内容。",
+            "media": { "image": "media/getting-started.svg", "altText": "本地操作审计" },
+            "completionEvents": ["onView:gitlabMr.auditHistory"]
+          }
+        ]
       }
     ],
     "configuration": {

@@ -47,6 +47,9 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`操作失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     });
+  const walkthroughId = 'zhoudd3.gitlab-auto-merge-request#gitlabWorkbenchGettingStarted';
+  const openGettingStarted = () => vscode.commands.executeCommand('workbench.action.openWalkthrough', walkthroughId, false);
+  context.subscriptions.push(vscode.commands.registerCommand('gitlabMr.openGettingStarted', openGettingStarted));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
     for (const key of ['provider', 'githubApiUrl', 'instanceUrl', 'allowBranchDeletion', 'hideNonConformingTargetBranches',
       'defaultReviewers', 'removeSourceBranch', 'squash', 'defaultTargetBranch']) {
@@ -621,6 +624,13 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
   if (releaseTreeView.visible) {
     void loadRemoteBranches();
+  }
+  const onboardingKey = 'gitlabMr.gettingStarted.v1.shown';
+  if (!context.globalState.get<boolean>(onboardingKey)) {
+    void openGettingStarted().then(
+      () => context.globalState.update(onboardingKey, true),
+      error => Logger.error('首次打开功能引导失败', error)
+    );
   }
 }
 
