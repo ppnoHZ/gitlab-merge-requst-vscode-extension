@@ -52,9 +52,11 @@ git push --set-upstream origin '${plan.branch}'
 
 如果 merge 提示已经是最新状态且无待提交内容，无需创建空提交；先核对是否仍需要该 conflict MR。放弃尚未完成的合并可执行 \`git merge --abort\`。
 
-## 3. 让插件核对并创建替代 MR
+## 3. ${plan.originalMr ? '让插件核对并创建替代 MR' : '创建 conflict MR'}
 
-推送完成后执行“继续 conflict 处理”。插件会从 GitLab 核对远程 conflict 分支确实包含任务记录的 Source 和 Target，并只使用 conflict 与 Target 的实际提交历史和文件差异生成描述。
+${plan.originalMr
+    ? '推送完成后执行“继续 conflict 处理”。插件会从 GitLab 核对远程 conflict 分支确实包含任务记录的 Source 和 Target，并只使用 conflict 与 Target 的实际提交历史和文件差异生成描述。'
+    : `此入口未关联原 MR。推送完成后，从 \`${plan.branch}\` 向 \`${plan.target.name}\` 创建 MR，并在描述中关联需要替代的冲突 MR。`}
 
 - 源分支：\`${plan.branch}\`
 - 目标分支：\`${plan.target.name}\`，必须与原冲突 MR 的目标一致。
@@ -63,7 +65,9 @@ git push --set-upstream origin '${plan.branch}'
 - 描述关联原冲突 MR，并保留分支信息、自检清单和生成说明。
 - 指定 Tech Leader 或其指定的高级工程师作为 Reviewer，通过 MR / Sonar / UT / 人工 Review 门禁后合并。
 
-替代 MR 创建成功后，插件才会关闭原冲突 MR；创建或网络核对失败时原 MR 保持开放。临时分支建议在 2 小时内完成处理，替代 MR 合并后可由插件核对并清理。
+${plan.originalMr
+    ? '替代 MR 创建成功后，插件才会关闭原冲突 MR；创建或网络核对失败时原 MR 保持开放。替代 MR 合并后可由插件核对并清理。'
+    : '此入口不会自动关闭任何 MR，也不会自动创建替代 MR；请在 GitLab 核对并处理原冲突 MR。'}临时分支建议在 2 小时内完成处理。
 
 依据：《代码仓库与分支规范》第 3.6 节详细处理步骤。原文分支表与步骤对创建基线的描述不一致，本功能沿用详细步骤的 Target 基线。插件不执行本地切换、merge、commit 或 push。
 `;
