@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -301,7 +301,7 @@
       },
       {
         "command": "gitlabMr.continueConflict",
-        "title": "继续 conflict 处理（解决、推送、创建替代 MR）",
+        "title": "继续 conflict 处理（核对推送并创建替代 MR）",
         "category": "GitLab MR",
         "icon": "$(git-merge)"
       },

@@ -25,24 +25,21 @@ ${plan.originalMr ? `\n原 MR：!${plan.originalMr.iid} — ${plan.originalMr.we
 
 临时分支：\`${plan.branch}\`
 
-## 1. 关闭原冲突 MR
-
-在 GitLab 核对原 MR 为 \`${plan.source.name} → ${plan.target.name}\` 且确有冲突，再关闭它并记录链接。插件未自动关闭任何 MR。
-
-## 2. 在本地处理冲突
+## 1. 在本地处理冲突
 
 以下为 Git Bash / POSIX Shell 命令，请在对应仓库执行。先运行 \`git status\`，妥善保存未提交改动后再切换分支。远程 conflict 分支已从目标测试分支创建，不要从 release/hotfix 重新创建。
 
 \`\`\`sh
 git status
 git fetch --no-tags origin 'refs/heads/${plan.branch}:refs/remotes/origin/${plan.branch}' 'refs/heads/${plan.source.name}:refs/remotes/origin/${plan.source.name}'
+test "$(git rev-parse 'refs/remotes/origin/${plan.source.name}')" = '${plan.source.sha}'
 git switch --create '${plan.branch}' --track 'origin/${plan.branch}'
 git merge --no-commit --no-ff 'origin/${plan.source.name}'
 \`\`\`
 
-若本地同名分支已存在，请核对其跟踪分支与提交，再手动切换；不要强制覆盖。本次 merge 使用 fetch 得到的最新原始源分支，SHA 可能与预览不同，应核对新增变更。
+若本地同名分支已存在，请核对其跟踪分支与提交，再手动切换；不要强制覆盖。SHA 校验失败说明 Source 已更新，请回到插件重新创建任务，不要把新旧版本混在同一任务中。
 
-## 3. 人工解决、测试并推送
+## 2. 人工解决、测试并推送
 
 使用 VS Code 源代码管理 / 合并编辑器逐文件处理，确认没有未解决冲突（\`git diff --name-only --diff-filter=U\` 应为空），并执行相关测试。
 
@@ -55,18 +52,20 @@ git push --set-upstream origin '${plan.branch}'
 
 如果 merge 提示已经是最新状态且无待提交内容，无需创建空提交；先核对是否仍需要该 conflict MR。放弃尚未完成的合并可执行 \`git merge --abort\`。
 
-## 4. 重新创建 MR
+## 3. 让插件核对并创建替代 MR
+
+推送完成后执行“继续 conflict 处理”。插件会从 GitLab 核对远程 conflict 分支确实包含任务记录的 Source 和 Target，并只使用 conflict 与 Target 的实际提交历史和文件差异生成描述。
 
 - 源分支：\`${plan.branch}\`
 - 目标分支：\`${plan.target.name}\`，必须与原冲突 MR 的目标一致。
 - 标题：\`(conflict-${plan.target.name}) ${plan.branch} 合并到 ${plan.target.name}\`
 - 合并后删除源分支：**YES**；Squash commits：**NO**。
-- 填写变更模块、摘要、影响范围、风险评估、备注；在备注关联原 MR。
+- 描述关联原冲突 MR，并保留分支信息、自检清单和生成说明。
 - 指定 Tech Leader 或其指定的高级工程师作为 Reviewer，通过 MR / Sonar / UT / 人工 Review 门禁后合并。
 
-可从插件“创建 MR”入口选择上述源、目标。临时分支建议在 2 小时内完成处理，使用后立即清理；判断清理依据是目标测试分支的合并结果。
+替代 MR 创建成功后，插件才会关闭原冲突 MR；创建或网络核对失败时原 MR 保持开放。临时分支建议在 2 小时内完成处理，替代 MR 合并后可由插件核对并清理。
 
-依据：《代码仓库与分支规范》第 3.6 节详细处理步骤。原文分支表与步骤对创建基线的描述不一致，本功能沿用详细步骤的 Target 基线。插件只创建远程分支和指南，未执行本地切换、合并、推送或 MR 关闭。
+依据：《代码仓库与分支规范》第 3.6 节详细处理步骤。原文分支表与步骤对创建基线的描述不一致，本功能沿用详细步骤的 Target 基线。插件不执行本地切换、merge、commit 或 push。
 `;
 }
 
