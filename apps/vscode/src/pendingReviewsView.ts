@@ -221,6 +221,16 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
     const generation = ++this.generation;
     const viewName = this.includeAuthored ? '我的待办' : '待我审批';
     const previousRoots = this.roots;
+    const previousChildren = new Map(this.children);
+    const previousFiles = new Map(this.files);
+    const previousRequests = new Map<string, PendingReviewItem>();
+    const previousProjects = new Map<string, PendingReviewItem>();
+    for (const item of [...previousRoots, ...[...previousChildren.values()].flat()]) {
+      if (item.id && item.kind === 'request') previousRequests.set(item.id, item);
+      if (item.id && item.kind === 'project') previousProjects.set(item.id, item);
+    }
+    const reusedRequests = new Set<PendingReviewItem>();
+    const cachedRequests = new Set<PendingReviewItem>();
     const hadData = this.updatedAt !== undefined;
     this.loading = true;
     this.loaded = false;
@@ -263,6 +273,10 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
         if (result.status === 'rejected') categoryErrors.set(category, String(result.reason));
         else tasks.push(...result.value.map(request => ({ request, category })));
       });
+      for (const { request, category } of tasks) {
+        const groupKey = `${category}:${request.project_id}`;
+        if (!groups.has(groupKey)) groups.set(groupKey, { category, projectId: request.project_id, items: [] });
+      }
       let failed = categoryErrors.size;
       for (let offset = 0; offset < tasks.length; offset += 5) {
         if (generation !== this.generation) return;
@@ -297,7 +311,7 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
             currentGroup.project = project;
             const conflicted = hasMergeConflicts(request);
             const canCreate = conflicted && !conflictCreationBlockReason(request);
-            const item = new PendingReviewItem('request', `!${request.iid} ${request.title}`,
+            let item = new PendingReviewItem('request', `!${request.iid} ${request.title}`,
               vscode.TreeItemCollapsibleState.Collapsed, project, request, project.id, undefined, category);
             item.id = `${category === 'review' ? 'pending-review' : 'authored-mr'}:${project.id}:${request.iid}`;
             item.contextValue = `${category === 'review' ? 'pendingReviewRequest' : 'authoredMergeRequest'}${conflicted ? '-conflict' : ''}${canCreate ? '-canCreateConflict' : ''}`;
@@ -312,6 +326,12 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
             item.tooltip = `${request.title}\n${project.path_with_namespace}\nMR: !${request.iid} · ID: ${request.id}\n${request.source_branch} → ${request.target_branch}\nSource: ${request.source_branch}\nTarget: ${request.target_branch}\n提交人: ${author}${username}\n${role}${hint}`;
             item.iconPath = conflicted ? new vscode.ThemeIcon('git-pull-request', new vscode.ThemeColor('errorForeground')) : new vscode.ThemeIcon('git-pull-request');
             item.command = { command: 'gitlabMr.showPendingReviewChanges', title: '查看 MR 变更文件', arguments: [item] };
+            const previous = previousRequests.get(item.id);
+            if (previous && JSON.stringify([previous.request, previous.description, previous.contextValue]) ===
+              JSON.stringify([request, item.description, item.contextValue])) {
+              item = previous;
+              reusedRequests.add(item);
+            }
             currentGroup.items.push(item);
             groups.set(key, currentGroup);
             counts[category]++;
@@ -319,12 +339,16 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
             failed++;
             Logger.error(`查询${viewName} MR 失败: Project ${request.project_id} !${request.iid}`, error);
             const currentGroup = group();
-            currentGroup.items.push(this.message(`!${request.iid} ${request.title} 查询失败: ${error instanceof Error ? error.message : String(error)}`, true));
+            const retry = this.message(`!${request.iid} ${request.title} 查询失败，点击单独重试此项目: ${error instanceof Error ? error.message : String(error)}`);
+            retry.id = `${category === 'review' ? 'pending-review' : 'authored-mr'}:${request.project_id}:${request.iid}:error`;
+            retry.command = { command: 'gitlabMr.retryPendingProject', title: '重试此项目', arguments: [request.project_id] };
+            currentGroup.items.push(retry);
             groups.set(key, currentGroup);
           }
         }));
       }
       if (generation !== this.generation) return;
+      for (const [groupKey, group] of groups) if (!group.items.length) groups.delete(groupKey);
       this.children.clear();
       this.clearReview();
       this.service = service;
@@ -337,15 +361,32 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
       for (const [, group] of [...groups].sort(([, a], [, b]) =>
         (a.project?.path_with_namespace ?? '').localeCompare(b.project?.path_with_namespace ?? ''))) {
         const id = group.projectId;
-        const item = new PendingReviewItem('project', group.project?.path_with_namespace ?? `Project ${id}（查询未完成）`,
+        const projectItemId = `${group.category === 'review' ? 'pending-review-project' : 'authored-mr-project'}:${id}`;
+        const oldProject = previousProjects.get(projectItemId);
+        const item = new PendingReviewItem('project', group.project?.path_with_namespace ?? String(oldProject?.label ?? `Project ${id}（查询未完成）`),
           vscode.TreeItemCollapsibleState.Collapsed, group.project, undefined, id, undefined, group.category);
-        item.id = `${group.category === 'review' ? 'pending-review-project' : 'authored-mr-project'}:${id}`;
+        item.id = projectItemId;
+        if (group.items.some(child => child.kind === 'message')) {
+          const failedIds = new Set(group.items.flatMap(child => child.kind === 'message' && child.id?.endsWith(':error')
+            ? [child.id.slice(0, -':error'.length)] : []));
+          for (const old of previousChildren.get(projectItemId) ?? []) {
+            if (old.kind === 'request' && old.id && failedIds.has(old.id)) {
+              group.items.push(old); cachedRequests.add(old);
+            }
+          }
+        }
         const count = group.items.filter(child => child.kind === 'request').length;
         item.description = `${count} 个${group.category === 'review' ? '待审批' : '我提交的 MR'}${group.items.some(child => child.kind === 'message') ? ' · 部分查询失败' : ''}`;
         item.iconPath = new vscode.ThemeIcon('repo');
         categoryItems.get(group.category)!.push(item);
         this.children.set(item.id, group.items);
-        for (const child of group.items) if (child.kind === 'request') this.activeRequests.add(child);
+        for (const child of group.items) {
+          if (child.kind === 'request' && !cachedRequests.has(child)) this.activeRequests.add(child);
+          if (reusedRequests.has(child) || cachedRequests.has(child)) {
+            const oldFiles = previousFiles.get(child);
+            if (oldFiles) this.files.set(child, oldFiles);
+          }
+        }
       }
       if (this.includeAuthored) {
         for (const category of categories) {
@@ -357,8 +398,20 @@ export class PendingReviewsProvider implements vscode.TreeDataProvider<PendingRe
           this.roots.push(item);
           const error = categoryErrors.get(category);
           const items = categoryItems.get(category)!;
-          this.children.set(item.id, error ? [this.message(`加载失败，点击重试: ${error}`, true)]
-            : items.length ? items : [this.message(category === 'authored' ? '当前没有你提交的开放 MR' : '当前没有指定你为 Reviewer 且尚未批准的开放 MR')]);
+          if (error) {
+            const old = previousChildren.get(item.id) ?? [];
+            this.children.set(item.id, [this.message(`加载失败，点击重试: ${error}`, true), ...old]);
+            for (const project of old.filter(child => child.kind === 'project' && child.id)) {
+              const children = previousChildren.get(project.id!);
+              if (children) {
+                this.children.set(project.id!, children);
+                for (const child of children) {
+                  const oldFiles = previousFiles.get(child);
+                  if (oldFiles) this.files.set(child, oldFiles);
+                }
+              }
+            }
+          } else this.children.set(item.id, items.length ? items : [this.message(category === 'authored' ? '当前没有你提交的开放 MR' : '当前没有指定你为 Reviewer 且尚未批准的开放 MR')]);
         }
       } else this.roots = categoryItems.get('review')!;
       this.loaded = true;

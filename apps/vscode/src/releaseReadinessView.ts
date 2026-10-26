@@ -90,6 +90,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
   private filters = normalizeFilters();
   private readonly knownMainChecks = new Set<string>();
   private branchKeyword = '';
+  private branchRefresh?: { state: BranchPageState; branches: string[]; latest: Map<string, BranchLatestCommit> };
   branchPage: BranchPageState = { page: 0, hasMore: true, loading: false };
   readonly releasePages = new Map<string, ReleasePageState>();
   readonly checkingBranches = new Map<string, object>();
@@ -149,6 +150,17 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     this.clearChecks();
   }
 
+  /** Keep the current snapshot visible while a complete remote snapshot is loaded in the background. */
+  beginBranchRefresh(): void {
+    this.branchPage = { page: 0, hasMore: true, loading: false };
+    this.branchRefresh = { state: this.branchPage, branches: [], latest: new Map() };
+    this.changeEmitter.fire(undefined);
+  }
+
+  failBranchRefresh(state: BranchPageState): void {
+    if (this.branchRefresh?.state === state) this.branchRefresh = undefined;
+  }
+
   appendBranchPage(state: BranchPageState, page: GitLabBranchPage): void {
     if (state !== this.branchPage) {
       return;
@@ -156,6 +168,19 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
     state.page++;
     state.hasMore = page.hasMore;
     state.error = undefined;
+    const refresh = this.branchRefresh?.state === state ? this.branchRefresh : undefined;
+    if (refresh) {
+      refresh.branches = [...new Set([...refresh.branches, ...page.items])];
+      for (const commit of page.latestCommits ?? []) refresh.latest.set(commit.branch, commit);
+      if (!page.hasMore) {
+        this.setBranches(refresh.branches);
+        this.latestCommits.clear();
+        this.updateLatestCommits({ items: [], hasMore: false, latestCommits: [...refresh.latest.values()] });
+        this.branchRefresh = undefined;
+        this.setMainChecksUnknown(this.branches, '正在检查远程分支的 main 合入状态');
+      }
+      return;
+    }
     this.updateLatestCommits(page);
     this.setMainChecksUnknown(page.items, '正在加载分支，尚未检查 main 合入状态');
     this.setBranches([...this.branches, ...page.items]);

@@ -30,6 +30,7 @@
 14. **可配置分支规范**：release、hotfix 和 conflict 名称可用模板配置。新建时严格校验生成结果；已有受管分支不符合模板时只显示警告，不修改或删除分支。
 15. **Conflict 任务跟踪**：有冲突的 MR 展开后直接提供创建入口。插件按模板从 Target 创建分支并显示固定三步指南；后台每分钟静默核对远端推送，状态栏在满足继续条件时显示数量。替代 MR 创建成功后与原 MR 双向关联，再关闭原 MR。
 16. **新审批通知**：轮询发现新的待审批 MR 时在右下角弹出通知，可直接打开 MR 或进入“我的待办”。首次启用只记录现有待办，同一 MR 不重复提醒；可通过 `gitlabMr.notifyNewApprovals` 关闭。
+17. **增量后台刷新**：视图切换和手动刷新先保留最近成功快照。相同的用户、MR、审批及项目请求在状态栏和树视图之间合并；分支分页全部成功后才原子替换列表。未变化 MR 复用原树节点和已加载 Diff，项目级失败保留该项目缓存并提供独立重试入口。
 
 审计目录位于扩展运行主机：Linux 为 `~/.local/state/gitlab-mr-tool/audit/`，macOS 为 `~/Library/Application Support/GitLab MR Tool/audit/`，Windows 为 `%LOCALAPPDATA%\GitLab MR Tool\audit\`。不提供清空按钮，不自动过期删除；SSH / WSL 日志位于远端，容器须自行挂载持久卷。目录路径和用量可在视图查看。
 

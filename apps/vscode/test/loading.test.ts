@@ -103,6 +103,8 @@ async function run() {
   assert(todos.getChildren(oldProject).includes(oldRequest));
   await assert.rejects(todos.approve(oldRequest), /正在刷新/);
   finishList([request]); await loading;
+  const refreshedProject = todos.getChildren()[0];
+  assert.strictEqual(todos.getChildren(refreshedProject)[0], oldRequest, '未变化的 MR 应复用树节点和已加载内容');
   pending = false; listFailure = true;
   const loadedProject = todos.getChildren()[0];
   await todos.refresh(false);

@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -39,6 +39,7 @@
     "onView:gitlabMr.releaseReadiness",
     "onView:gitlabMr.pendingReviews",
     "onCommand:gitlabMr.refreshPendingReviews",
+    "onCommand:gitlabMr.retryPendingProject",
     "onCommand:gitlabMr.openPendingReview",
     "onCommand:gitlabMr.showPendingReviewChanges",
     "onCommand:gitlabMr.openReviewDiff",
@@ -76,6 +77,11 @@
         "title": "诊断 GitLab 连接",
         "category": "GitLab MR",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "gitlabMr.retryPendingProject",
+        "title": "重试加载此 MR 项目",
+        "category": "GitLab MR"
       },
       {
         "command": "gitlabMr.filterBranchStatus",
@@ -568,6 +574,10 @@
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "gitlabMr.retryPendingProject",
+          "when": "false"
+        },
         {
           "command": "gitlabMr.showAuditOperation",
           "when": "false"

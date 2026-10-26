@@ -182,6 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const refreshPendingReviewsCmd = registerCommand('gitlabMr.refreshPendingReviews', () =>
     refreshPendingReviews()
   );
+  const retryPendingProjectCmd = registerCommand('gitlabMr.retryPendingProject', () => refreshPendingReviews(false));
   const runReviewAction = async (title: string, action: () => Promise<void>) => {
     try {
       await action();
@@ -276,7 +277,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
   context.subscriptions.push(
-    pendingReviews, pendingTreeView, refreshPendingReviewsCmd, openPendingReviewCmd,
+    pendingReviews, pendingTreeView, refreshPendingReviewsCmd, retryPendingProjectCmd, openPendingReviewCmd,
     showReviewChangesCmd, openReviewDiffCmd, approveReviewCmd, mergeReviewCmd, createConflictFromMrCmd,
     vscode.workspace.registerTextDocumentContentProvider('gitlab-mr-review', pendingReviews.review),
     pendingTreeView.onDidExpandElement(event => {
@@ -1131,7 +1132,8 @@ export async function handleCheckReleaseReadiness(
 ) {
   repository = repository ?? await selectedWorkspaceRepository();
   if (options.refreshBranches) {
-    provider.resetBranchPages();
+    if (provider.hasBranches) provider.beginBranchRefresh();
+    else provider.resetBranchPages();
   }
   const branchState = provider.branchPage;
   const keyword = provider.getBranchKeyword();
@@ -1223,6 +1225,7 @@ export async function handleCheckReleaseReadiness(
         );
       } catch (error) {
         branchState.error = error instanceof Error ? error.message : String(error);
+        provider.failBranchRefresh(branchState);
         throw error;
       }
     }
