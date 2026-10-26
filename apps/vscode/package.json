@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -503,6 +503,11 @@
           "minimum": 30,
           "maximum": 600,
           "description": "状态栏待审批 MR 数量的静默刷新间隔（秒），不会重置正在查看的 MR 差异。"
+        },
+        "gitlabMr.notifyNewApprovals": {
+          "type": "boolean",
+          "default": true,
+          "description": "发现新的待我审批 MR 时显示右下角通知。首次启用只建立当前待办基线，不弹出历史 MR。"
         },
         "gitlabMr.branchTemplates.release": {
           "type": "string",

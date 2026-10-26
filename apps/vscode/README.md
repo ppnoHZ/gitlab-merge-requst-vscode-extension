@@ -29,6 +29,7 @@
 13. **多仓库与连接诊断**：多根工作区可在分支管理标题栏选择当前仓库，选择会按工作区记忆。诊断页分别核对 Git Remote、实例地址、SecretStorage Token、身份和项目访问权限，并针对代理、证书和权限错误给出建议；单个无效目录不会阻止识别其他仓库。
 14. **可配置分支规范**：release、hotfix 和 conflict 名称可用模板配置。新建时严格校验生成结果；已有受管分支不符合模板时只显示警告，不修改或删除分支。
 15. **Conflict 任务跟踪**：有冲突的 MR 展开后直接提供创建入口。插件按模板从 Target 创建分支并显示固定三步指南；后台每分钟静默核对远端推送，状态栏在满足继续条件时显示数量。替代 MR 创建成功后与原 MR 双向关联，再关闭原 MR。
+16. **新审批通知**：轮询发现新的待审批 MR 时在右下角弹出通知，可直接打开 MR 或进入“我的待办”。首次启用只记录现有待办，同一 MR 不重复提醒；可通过 `gitlabMr.notifyNewApprovals` 关闭。
 
 审计目录位于扩展运行主机：Linux 为 `~/.local/state/gitlab-mr-tool/audit/`，macOS 为 `~/Library/Application Support/GitLab MR Tool/audit/`，Windows 为 `%LOCALAPPDATA%\GitLab MR Tool\audit\`。不提供清空按钮，不自动过期删除；SSH / WSL 日志位于远端，容器须自行挂载持久卷。目录路径和用量可在视图查看。
 
@@ -51,6 +52,7 @@
 | `gitlabMr.allowBranchDeletion` | `false` | 是否允许手动删除已全部合入远程 main 的分支；不影响 MR 自动删除配置。 |
 | `gitlabMr.squash` | `false` | 是否开启 Squash commits。 |
 | `gitlabMr.autoOpenInBrowser` | `true` | MR 创建成功后是否自动在浏览器中打开对应页面。 |
+| `gitlabMr.notifyNewApprovals` | `true` | 新的 MR 指定我为 Reviewer 且尚未批准时显示右下角通知。 |
 | `gitlabMr.branchTemplates.release` | `release/{version}` | Release 分支名称模板，可使用 `{version}`、`{base}`。 |
 | `gitlabMr.branchTemplates.hotfix` | `hotfix/{version}/{issue}{descriptionSuffix}` | Hotfix 分支名称模板，可使用版本、工单和描述变量。 |
 | `gitlabMr.branchTemplates.conflict` | `conflict/{source}` | Conflict 分支名称模板，可使用 `{source}`，且必须保留 `conflict/` 前缀。 |

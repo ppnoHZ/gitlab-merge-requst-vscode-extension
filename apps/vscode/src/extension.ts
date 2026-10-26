@@ -97,10 +97,10 @@ export async function activate(context: vscode.ExtensionContext) {
     const connection = await currentConnection();
     const token = await tokenManager.getToken(connection);
     return token ? createRepositoryProvider(connection, token) : undefined;
-  });
+  }, context.globalState);
   context.subscriptions.push(approvalStatus,
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (['provider', 'instanceUrl', 'githubApiUrl', 'approvalRefreshSeconds'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) approvalStatus.invalidate();
+      if (['provider', 'instanceUrl', 'githubApiUrl', 'approvalRefreshSeconds', 'notifyNewApprovals'].some(key => event.affectsConfiguration(`gitlabMr.${key}`))) approvalStatus.invalidate();
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => approvalStatus.invalidate()),
     context.secrets.onDidChange(() => approvalStatus.invalidate())
