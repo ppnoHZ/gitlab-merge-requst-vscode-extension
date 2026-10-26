@@ -1,6 +1,6 @@
 import assert from 'assert';
 import axios from 'axios';
-import { configuration, window, warningDialog } from './vscodeMock';
+import { configuration, configurationScopes, window, warningDialog } from './vscodeMock';
 import { GitService } from '../src/gitService';
 import { handleCreateRemoteBranch } from '../src/branchCreation';
 import { GitHubProvider } from '../src/providers/githubProvider';
@@ -26,13 +26,20 @@ async function run() {
     delete: async (key: string) => { secrets.delete(key); }
   } as any });
   configuration.set('accessToken', 'legacy');
+  configurationScopes.workspace.set('accessToken', 'workspace-legacy');
+  configurationScopes.workspaceFolder.set('accessToken', 'folder-legacy');
+  secrets.set('gitlabMr.personalAccessToken', 'older-legacy');
   assert.equal(await tokens.getToken(connection), undefined);
   assert.equal(await tokens.getToken(enterprise), undefined);
   const gitlab = resolveProviderConnection({});
   assert.equal(await tokens.getToken(gitlab), 'legacy');
   assert.equal(secrets.get(credentialKey(gitlab)), 'legacy');
+  assert.equal(configuration.has('accessToken'), false);
+  assert.equal(configurationScopes.workspace.has('accessToken'), false);
+  assert.equal(configurationScopes.workspaceFolder.has('accessToken'), false);
+  assert.equal(secrets.has('gitlabMr.personalAccessToken'), false);
   await tokens.setToken('github-only', connection);
-  assert.equal(configuration.get('accessToken'), 'legacy');
+  assert.equal(configuration.get('accessToken'), undefined);
   assert.equal(await tokens.getToken(connection), 'github-only');
   assert.equal(await tokens.getToken(enterprise), undefined);
   configuration.set('instanceUrl', 'https://other.gitlab');

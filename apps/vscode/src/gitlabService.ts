@@ -1,6 +1,6 @@
 import type { RepositoryProvider } from './providers/repositoryProvider';
 import { conflictMergeOptions } from './conflictRules';
-import type { BranchReference, BaseKind } from '@gitlab-workbench/core';
+import type { BranchReference, BaseKind, GitCommitInfo } from '@gitlab-workbench/core';
 import axios from 'axios';
 import * as https from 'https';
 import { URL } from 'url';
@@ -23,6 +23,12 @@ interface GitLabBranch {
   protected: boolean;
   default: boolean;
   commit: { id: string };
+}
+
+export interface ConflictResolution {
+  headSha: string;
+  commits: GitCommitInfo[];
+  files: string[];
 }
 
 export class GitLabService implements RepositoryProvider {
@@ -232,6 +238,47 @@ export class GitLabService implements RepositoryProvider {
       const after = await this.getReviewDetails(project, iid);
       if (after.state !== 'closed') throw new Error('尚未确认原 MR 已关闭，请核对后继续。');
     });
+  }
+
+  async getConflictResolution(project: number, branch: string, targetSha: string, sourceSha: string): Promise<ConflictResolution> {
+    const validSha = (value: unknown): value is string => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value);
+    if (!Number.isSafeInteger(project) || project <= 0 || !branch.startsWith('conflict/') || !validSha(targetSha) || !validSha(sourceSha)) {
+      throw new Error('无效的 conflict 远程核对参数。');
+    }
+    const ref = await this.getBranchCreationRef(project, 'branch', branch);
+    if (ref.sha === targetSha) throw new Error('conflict 分支尚未推送处理提交。');
+    const query = new URLSearchParams({ from: targetSha, to: ref.sha, straight: 'true' });
+    const comparison = await this.request<{
+      compare_timeout?: boolean; compare_same_ref?: boolean;
+      commits?: Array<{ id?: string; short_id?: string; title?: string; author_name?: string; committed_date?: string; parent_ids?: string[] }>;
+      diffs?: Array<{ old_path?: string; new_path?: string; new_file?: boolean; deleted_file?: boolean; renamed_file?: boolean; too_large?: boolean; collapsed?: boolean }>;
+    }>(`/projects/${project}/repository/compare?${query}`);
+    if (comparison?.compare_timeout === true || comparison?.compare_same_ref === true ||
+      !Array.isArray(comparison?.commits) || !Array.isArray(comparison?.diffs)) {
+      throw new Error('GitLab 未完整返回 conflict 分支差异，请稍后重试或在 GitLab 核对。');
+    }
+    const commits = comparison.commits.map(commit => {
+      if (!validSha(commit.id) || typeof commit.short_id !== 'string' || !commit.short_id || typeof commit.title !== 'string' ||
+        typeof commit.author_name !== 'string' || typeof commit.committed_date !== 'string' ||
+        !Array.isArray(commit.parent_ids) || !commit.parent_ids.every(validSha)) {
+        throw new Error('GitLab 返回的 conflict 提交信息无效。');
+      }
+      return { raw: commit, value: { hash: commit.id, shortHash: commit.short_id, title: commit.title,
+        author: commit.author_name, date: commit.committed_date.slice(0, 10) } };
+    });
+    if (!commits.some(commit => commit.raw.parent_ids!.includes(targetSha) && commit.raw.parent_ids!.includes(sourceSha))) {
+      throw new Error('远程 conflict 分支未包含以原 Source 和 Target 为父提交的合并记录，请按处理指南完成 merge 后再继续。');
+    }
+    const files = comparison.diffs.map(diff => {
+      if (typeof diff.old_path !== 'string' || !diff.old_path || typeof diff.new_path !== 'string' || !diff.new_path ||
+        diff.too_large === true || diff.collapsed === true) throw new Error('GitLab 返回的文件差异不完整，请在网页核对。');
+      if (diff.new_file) return `A\t${diff.new_path}`;
+      if (diff.deleted_file) return `D\t${diff.old_path}`;
+      if (diff.renamed_file) return `R\t${diff.old_path} → ${diff.new_path}`;
+      return `M\t${diff.new_path}`;
+    });
+    if (!commits.length || !files.length) throw new Error('conflict 分支与 Target 没有可提交的实际差异，无需创建替代 MR。');
+    return { headSha: ref.sha, commits: commits.map(commit => commit.value), files };
   }
 
   async getReviewDiffVersion(projectId: number, iid: number, refs: ReviewDiffRefs): Promise<ReviewDiffVersion> {

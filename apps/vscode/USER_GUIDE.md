@@ -51,18 +51,18 @@ pnpm run package:vsix
 2. 搜索 **GitLab MR: Set Access Token**。
 3. 输入具有 `api` 权限的 Token，回车保存。
 
-也可在设置中的 `gitlabMr.accessToken` 填写 Token。
-
 **凭据注意事项：**
 
-- 当前“Set Access Token”命令同时将 Token 写入 VS Code SecretStorage 和用户设置。
-- 读取时优先使用 `gitlabMr.accessToken` 设置值，其次读取 SecretStorage。
-- 不要把 Token 写入仓库内会被提交的配置，也不要分享包含 Token 的设置截图或日志。
-- 更换 Token 时可重新执行该命令；遇到过期或权限问题，应先在 GitLab 检查 Token。
+- Token 只写入 VS Code SecretStorage，不会写入用户设置、工作区设置或仓库文件。底层由系统凭据库或当前 VS Code 运行环境的安全存储管理。
+- 升级旧版本时，插件会先把旧 `gitlabMr.accessToken` 迁移到 SecretStorage，成功后清除用户、工作区和工作区文件夹范围内的明文配置。
+- Token 按 GitLab 实例隔离。更换 Token 时重新执行 **Set Access Token**；清除时执行 **Clear Access Token**。
+- Remote SSH、容器或 Codespaces 窗口使用各自运行环境的 SecretStorage，首次进入新的运行环境可能需要重新录入。
 
 ### 3. 打开 GitLab 工作台
 
-点击 VS Code 活动栏的 **GitLab 工作台** 图标，其中包含 **分支管理**、**待我审批** 和 **操作审计** 三个视图。原“上线检查”分支视图现更名为“分支管理”，原有命令 ID、过滤条件和工作区状态保留。
+点击 VS Code 活动栏的 **GitLab 工作台** 图标，其中包含 **分支管理**、**上线总览**、**我的待办** 和 **操作审计** 四个视图。原“上线检查”分支视图现更名为“分支管理”，原有命令 ID、过滤条件和工作区状态保留。
+
+首次安装会自动打开功能引导。需要重新查看时，在命令面板运行 **GitLab MR: Getting Started (打开功能引导)**，可逐步进入 GitLab 配置、Token、分支管理、我的待办、上线总览、冲突处理和操作审计。
 
 已配置 Token 时会自动加载项目的完整远程分支列表，第一层不需要点击“加载更多”；只有分支下的第二层检查结果分页。首次未配置 Token 或未加载分支时，可以使用视图中的加载入口或命令 **GitLab MR: Check Release Readiness**。
 
@@ -388,7 +388,6 @@ release 检查结果中的 feature 分支支持工单链接：
 | 设置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `gitlabMr.instanceUrl` | `https://gitlab.com` | GitLab 实例地址 |
-| `gitlabMr.accessToken` | 空 | API Token，勿提交到仓库 |
 | `gitlabMr.defaultTargetBranch` | `master` | 默认目标；参与推荐排序，不强制使用 |
 | `gitlabMr.hideNonConformingTargetBranches` | `true` | 目标选择时隐藏不符合内置合并规则的分支；关闭后恢复全部候选 |
 | `gitlabMr.defaultReviewers` | `[]` | Reviewer 用户名列表，不需要 `@` |
@@ -513,6 +512,8 @@ Remote SSH / WSL 在**远端扩展宿主**保存，而非本地 UI 主机。容�
 选择基线类型（分支或 Tag，conflict 固定为目标分支），输入关键词搜索并选择具体基线。release 填版本号；hotfix 填版本、工单号和可选英文描述。conflict 填写原始 release/hotfix 分支的完整名称，不再单独填写版本或工单。核对完整 SHA 后点击「确认创建」。
 
 处理冲突时，在准备合回的目标分支上右键选择「新建 conflict 分支」。创建的是目标分支的副本，不会自动执行 merge。随后将待合入代码合并到该副本、解决冲突并测试，最后从 conflict 分支向原目标分支发起 MR。
+
+从“我的待办”中对红色冲突 MR 执行“处理冲突”时，插件会保存一个可恢复的远程任务。插件不会创建 worktree，也不会自动切换分支、merge、commit 或 push。人工推送后运行“继续 conflict 处理”，插件会从 GitLab 核对远程合并提交包含任务固定的 Source 和 Target，使用 conflict 与 Target 的实际提交及文件差异生成替代 MR。替代 MR 创建成功后才关闭原 MR；中途失败时原 MR 保持开放，已创建替代 MR 时则从远程恢复，避免重复创建。
 
 只创建 GitLab 远程分支；不会切换或修改当前工作区文件。取消确认不会创建分支。基线更新、重名或权限不足会阻止创建，网络结果不确定时请先在 GitLab 核对，避免重复操作。
 

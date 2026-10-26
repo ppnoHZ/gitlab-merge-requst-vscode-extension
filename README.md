@@ -61,6 +61,8 @@ pnpm run build:extension
 pnpm run package:vsix
 ```
 
+修改 VS Code 扩展、共享核心或分支规范并推送后，GitHub Actions 的 **Package VS Code extension** 工作流会自动运行测试并生成版本化 `.vsix`。在对应运行的 **Artifacts** 下载 `gitlab-workbench-vscode-<版本>-<提交>`，校验随包提供的 `.sha256` 后，可在 VS Code 的 **Extensions → … → Install from VSIX** 安装。工作流也支持手动触发，不会自动发布到 Marketplace。
+
 VSIX 输出到 `apps/vscode/`，构建时将共享核心打入扩展 bundle，不需要额外安装共享包。扩展功能说明见 [扩展 README](apps/vscode/README.md) 和 [用户指南](apps/vscode/USER_GUIDE.md)。
 
 GitHub Actions 的 **VS Code extension** 工作流会在扩展、共享核心或相关依赖配置变更时运行发布前测试并打包 VSIX；也可在 Actions 页面手动运行。成功后从工作流运行页面的 `gitlab-workbench-vscode` Artifact 下载 `.vsix` 安装包。

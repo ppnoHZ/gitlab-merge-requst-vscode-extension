@@ -36,6 +36,10 @@ export class EventEmitter<T> {
 }
 
 export const configuration = new Map<string, unknown>();
+export enum ConfigurationTarget { Global = 1, Workspace = 2, WorkspaceFolder = 3 }
+export const configurationScopes = {
+  global: new Map<string, unknown>(), workspace: new Map<string, unknown>(), workspaceFolder: new Map<string, unknown>()
+};
 export const openedDocuments: Array<{ language: string; content: string }> = [];
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }],
@@ -45,7 +49,16 @@ export const workspace = {
   },
   getConfiguration: () => ({
     get: <T>(key: string, fallback: T): T => configuration.has(key) ? configuration.get(key) as T : fallback,
-    inspect: (key: string) => ({ globalValue: configuration.get(key) })
+    inspect: (key: string) => ({
+      globalValue: configurationScopes.global.has(key) ? configurationScopes.global.get(key) : configuration.get(key),
+      workspaceValue: configurationScopes.workspace.get(key), workspaceFolderValue: configurationScopes.workspaceFolder.get(key)
+    }),
+    update: async (key: string, value: unknown, target: ConfigurationTarget) => {
+      const values = target === ConfigurationTarget.Global ? configurationScopes.global
+        : target === ConfigurationTarget.Workspace ? configurationScopes.workspace : configurationScopes.workspaceFolder;
+      if (value === undefined) values.delete(key); else values.set(key, value);
+      if (key === 'accessToken' && value === undefined) configuration.delete(key);
+    }
   })
 };
 

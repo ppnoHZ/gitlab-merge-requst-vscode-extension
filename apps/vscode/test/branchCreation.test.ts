@@ -70,7 +70,7 @@ async function run() {
     assert.equal(guide.language, 'markdown');
     assert(guide.content.includes("git merge --no-commit --no-ff 'origin/release/LI2500076'"));
     assert(guide.content.includes('目标分支：`dev`'));
-    assert(guide.content.includes('插件未自动关闭任何 MR'));
+    assert(guide.content.includes('此入口不会自动关闭任何 MR'));
     const conflictPosts = posts;
     picks = ['dev']; inputs = [];
     await assert.rejects(handleCreateRemoteBranch(tokens, 'conflict', 'release/LI2500076'), /可能正用于其他目标环境/);
