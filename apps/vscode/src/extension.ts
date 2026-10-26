@@ -20,6 +20,8 @@ import { registerAuditView } from './auditView';
 import { loadReleaseOverview } from './releaseOverview';
 import { ReleaseOverviewProvider } from './releaseOverviewView';
 import { WorkbenchFilters, pickWorkbenchFilters } from './workbenchFilters';
+import { RepositoryContext, selectedWorkspaceRepository, type WorkspaceRepository } from './repositoryContext';
+import { showConnectionDiagnostics } from './connectionDiagnostics';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -63,6 +65,7 @@ export async function activate(context: vscode.ExtensionContext) {
   }));
 
   const tokenManager = new TokenManager(context);
+  const repositoryContext = new RepositoryContext(context.workspaceState);
   context.subscriptions.push(
     { dispose: invalidateRepositoryProviders },
     vscode.workspace.onDidChangeConfiguration(event => {
@@ -75,6 +78,21 @@ export async function activate(context: vscode.ExtensionContext) {
   );
   const conflictSessions = new ConflictSessions(context.globalState, tokenManager);
   context.subscriptions.push(registerCommand('gitlabMr.continueConflict', () => conflictSessions.resume()));
+  const conflictStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+  conflictStatus.command = 'gitlabMr.continueConflict';
+  const refreshConflictStatus = async () => {
+    const status = await conflictSessions.readiness();
+    if (!status.total) { conflictStatus.hide(); return; }
+    conflictStatus.text = status.ready ? `$(warning) Conflict ${status.ready}` : `$(sync~spin) Conflict ${status.total}`;
+    conflictStatus.tooltip = status.ready
+      ? `${status.ready} 个 conflict 任务已检测到有效远端推送，点击继续`
+      : `${status.total} 个 conflict 任务正在等待解决并推送`;
+    conflictStatus.show();
+  };
+  const conflictPoll = setInterval(() => void refreshConflictStatus(), 60_000);
+  conflictPoll.unref();
+  context.subscriptions.push(conflictStatus, { dispose: () => clearInterval(conflictPoll) });
+  void refreshConflictStatus();
   const approvalStatus = new ReviewStatus(async () => {
     const connection = await currentConnection();
     const token = await tokenManager.getToken(connection);
@@ -88,7 +106,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.secrets.onDidChange(() => approvalStatus.invalidate())
   );
   const overview = new ReleaseOverviewProvider(async () => {
-    const workspace = vscode.workspace.workspaceFolders?.[0];
+    const workspace = (await selectedWorkspaceRepository())?.folder ?? vscode.workspace.workspaceFolders?.[0];
     if (!workspace) return undefined;
     const git = new GitService(workspace.uri.fsPath);
     const repo = await git.getRepoInfo();
@@ -222,6 +240,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       if (!item) return;
       if (await pendingReviews.createConflict(item, (service, plan, project, reviewers) => conflictSessions.start(service, plan, project, reviewers))) {
+        await refreshConflictStatus();
         await refreshPendingReviews(false);
         overview.invalidate();
       }
@@ -296,6 +315,20 @@ export async function activate(context: vscode.ExtensionContext) {
     treeDataProvider: releaseProvider,
     showCollapseAll: true
   });
+  const selectRepositoryCmd = registerCommand('gitlabMr.selectRepository', async () => {
+    const selected = await repositoryContext.select();
+    if (!selected) return;
+    releaseProvider.resetBranchPages();
+    pendingReviews.reset();
+    overview.invalidate();
+    releaseTreeView.description = selected.repo.projectPath;
+    await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false, refreshBranches: true }, selected);
+    if (pendingTreeView.visible) await refreshPendingReviews(false);
+  });
+  const diagnoseConnectionCmd = registerCommand('gitlabMr.diagnoseConnection', async () => {
+    await showConnectionDiagnostics(await repositoryContext.current(), tokenManager);
+  });
+  context.subscriptions.push(selectRepositoryCmd, diagnoseConnectionCmd);
   const branchStatusFilterKey = 'gitlabMr.branchStatusFilters';
   releaseProvider.setFilters(context.workspaceState.get<WorkbenchFilters>(branchStatusFilterKey, { main: [], risks: [], updated: 'all' }));
   context.subscriptions.push(
@@ -319,9 +352,10 @@ export async function activate(context: vscode.ExtensionContext) {
   for (const kind of [undefined, 'release', 'hotfix', 'conflict'] as const) {
     const name = kind ? `gitlabMr.create${kind[0].toUpperCase()}${kind.slice(1)}Branch` : 'gitlabMr.createRemoteBranch';
     context.subscriptions.push(registerCommand(name, async (item?: ReleaseReadinessTreeItem) => {
-      if (await handleCreateRemoteBranch(tokenManager, kind, item?.branchPath)) {
+      const repository = await repositoryContext.current();
+      if (await handleCreateRemoteBranch(tokenManager, kind, item?.branchPath, repository)) {
         try {
-          await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false, refreshBranches: true });
+          await handleCheckReleaseReadiness(tokenManager, releaseProvider, releaseTreeView, { selectBranch: false, refreshBranches: true }, repository);
         } catch (error) {
           Logger.warn('远程分支已创建，但刷新分支列表失败', error);
           vscode.window.showWarningMessage('远程分支已创建，但列表刷新失败，请手动刷新，不要重复创建。');
@@ -661,7 +695,7 @@ export async function handleCreateMainMergeRequest(
     vscode.window.showWarningMessage('请在分支管理视图中选择 main 以外的分支。');
     return;
   }
-  const workspace = vscode.workspace.workspaceFolders?.[0];
+  const workspace = (await selectedWorkspaceRepository())?.folder ?? vscode.workspace.workspaceFolders?.[0];
   if (!workspace) {
     vscode.window.showWarningMessage('请先打开 GitLab 项目的工作区。');
     return;
@@ -708,7 +742,7 @@ async function deleteBranchAudited(
   provider: ReleaseReadinessProvider,
   item?: ReleaseReadinessTreeItem
 ): Promise<boolean> {
-  const workspace = vscode.workspace.workspaceFolders?.[0];
+  const workspace = (await selectedWorkspaceRepository())?.folder ?? vscode.workspace.workspaceFolders?.[0];
   const deletionAllowed = () => vscode.workspace.getConfiguration('gitlabMr', workspace?.uri)
     .get<boolean>('allowBranchDeletion', false) === true;
   if (!deletionAllowed()) {
@@ -790,7 +824,9 @@ async function createMergeRequestAudited(
     await Audit.note('blocked');
     return false;
   }
-  const rootPath = workspaceFolders[0].uri.fsPath;
+  const selectedRepository = await selectedWorkspaceRepository();
+  const selectedFolder = selectedRepository?.folder ?? workspaceFolders[0];
+  const rootPath = selectedFolder.uri.fsPath;
   debugLog(`当前工作区路径: ${rootPath}`);
   const gitService = new GitService(rootPath);
 
@@ -803,13 +839,13 @@ async function createMergeRequestAudited(
     return false;
   }
 
-  const repoInfo = await gitService.getRepoInfo();
+  const repoInfo = selectedRepository?.repo ?? await gitService.getRepoInfo();
   const currentBranch = repoInfo.sourceBranch;
   debugLog(`检测到当前分支: ${currentBranch}, 远程仓库 URL: ${repoInfo.remoteUrl}, 解析项目路径: ${repoInfo.projectPath}`);
 
   // 3. 读取配置项
-  const config = vscode.workspace.getConfiguration('gitlabMr', workspaceFolders[0].uri);
-  const connection = configuredConnection(repoInfo, workspaceFolders[0].uri);
+  const config = vscode.workspace.getConfiguration('gitlabMr', selectedFolder.uri);
+  const connection = configuredConnection(repoInfo, selectedFolder.uri);
   const instanceUrl = connection.instanceUrl;
   const defaultTarget = config.get<string>('defaultTargetBranch', 'master');
   const hideNonConformingTargets = config.get<boolean>('hideNonConformingTargetBranches', true);
@@ -1091,8 +1127,9 @@ export async function handleCheckReleaseReadiness(
   options: {
     selectedBranch?: string; selectBranch?: boolean; promptForToken?: boolean; refreshBranches?: boolean;
     loadMoreRelease?: boolean
-  } = {}
+  } = {}, repository?: WorkspaceRepository
 ) {
+  repository = repository ?? await selectedWorkspaceRepository();
   if (options.refreshBranches) {
     provider.resetBranchPages();
   }
@@ -1121,7 +1158,7 @@ export async function handleCheckReleaseReadiness(
   }
   provider.refresh();
   try {
-    const workspace = vscode.workspace.workspaceFolders?.[0];
+    const workspace = repository?.folder ?? vscode.workspace.workspaceFolders?.[0];
     if (!workspace) {
       if (options.promptForToken !== false) {
         vscode.window.showWarningMessage('请先打开 GitLab 项目的工作区。');
@@ -1130,7 +1167,7 @@ export async function handleCheckReleaseReadiness(
     }
 
     const gitService = new GitService(workspace.uri.fsPath);
-    const repoInfo = await gitService.getRepoInfo();
+    const repoInfo = repository?.repo ?? await gitService.getRepoInfo();
     const config = vscode.workspace.getConfiguration('gitlabMr');
     const connection = configuredConnection(repoInfo, workspace.uri);
     let token = await tokenManager.getToken(connection);
@@ -1371,8 +1408,10 @@ export function deactivate() {
 }
 
 async function currentConnection() {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+  const selected = await selectedWorkspaceRepository();
+  const folder = selected?.folder ?? vscode.workspace.workspaceFolders?.[0];
   if (!folder) return configuredConnection();
+  if (selected) return configuredConnection(selected.repo, folder.uri);
   const git = new GitService(folder.uri.fsPath);
   if (!await git.isGitRepo()) return configuredConnection(undefined, folder.uri);
   const remoteUrl = await git.getRemoteUrl();

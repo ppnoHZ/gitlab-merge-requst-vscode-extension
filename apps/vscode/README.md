@@ -26,6 +26,9 @@
 10. **最新提交信息**：分支名称后展示“作者名 · 提交时间 · 几分钟前/几小时前/几天前更新”，每分钟自动刷新时间间隔，不额外请求 GitLab，保留原有状态标记。支持远程列表及 release 下已加载的 feature 分支，不查询分支创建活动。
 11. **GitLab 工作台与待我审批**：活动栏“GitLab 工作台”下提供“分支管理”和“待我审批”。待审批 MR 按 Project 分组，点击展开变更文件，在 VS Code 中查看只读双栏 Diff；支持二次确认后批准所审阅的提交版本，代码变化时阻止批准，不执行合并，并保留浏览器入口。
 12. **独立本地操作审计**：“操作审计”视图支持历史分页、组合筛选、操作时间线、CSV / JSONL 导出和完整性校验。删除分支、Approve、创建 MR 与本扩展保存/清除 Token 前必须将准备记录 fsync 落盘；写入失败则不发出操作，远端成功后记录失败会明确提示并暂停后续敏感操作。日志不写入 VS Code 或项目目录，正常卸载扩展 / VS Code 不会随之删除。
+13. **多仓库与连接诊断**：多根工作区可在分支管理标题栏选择当前仓库，选择会按工作区记忆。诊断页分别核对 Git Remote、实例地址、SecretStorage Token、身份和项目访问权限，并针对代理、证书和权限错误给出建议；单个无效目录不会阻止识别其他仓库。
+14. **可配置分支规范**：release、hotfix 和 conflict 名称可用模板配置。新建时严格校验生成结果；已有受管分支不符合模板时只显示警告，不修改或删除分支。
+15. **Conflict 任务跟踪**：有冲突的 MR 展开后直接提供创建入口。插件按模板从 Target 创建分支并显示固定三步指南；后台每分钟静默核对远端推送，状态栏在满足继续条件时显示数量。替代 MR 创建成功后与原 MR 双向关联，再关闭原 MR。
 
 审计目录位于扩展运行主机：Linux 为 `~/.local/state/gitlab-mr-tool/audit/`，macOS 为 `~/Library/Application Support/GitLab MR Tool/audit/`，Windows 为 `%LOCALAPPDATA%\GitLab MR Tool\audit\`。不提供清空按钮，不自动过期删除；SSH / WSL 日志位于远端，容器须自行挂载持久卷。目录路径和用量可在视图查看。
 
@@ -48,6 +51,9 @@
 | `gitlabMr.allowBranchDeletion` | `false` | 是否允许手动删除已全部合入远程 main 的分支；不影响 MR 自动删除配置。 |
 | `gitlabMr.squash` | `false` | 是否开启 Squash commits。 |
 | `gitlabMr.autoOpenInBrowser` | `true` | MR 创建成功后是否自动在浏览器中打开对应页面。 |
+| `gitlabMr.branchTemplates.release` | `release/{version}` | Release 分支名称模板，可使用 `{version}`、`{base}`。 |
+| `gitlabMr.branchTemplates.hotfix` | `hotfix/{version}/{issue}{descriptionSuffix}` | Hotfix 分支名称模板，可使用版本、工单和描述变量。 |
+| `gitlabMr.branchTemplates.conflict` | `conflict/{source}` | Conflict 分支名称模板，可使用 `{source}`，且必须保留 `conflict/` 前缀。 |
 
 ---
 

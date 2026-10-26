@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -59,10 +59,24 @@
     "onCommand:gitlabMr.createConflictBranch",
     "onCommand:gitlabMr.createConflictFromMergeRequest",
     "onCommand:gitlabMr.continueConflict",
-    "onCommand:gitlabMr.showApprovalInbox"
+    "onCommand:gitlabMr.showApprovalInbox",
+    "onCommand:gitlabMr.selectRepository",
+    "onCommand:gitlabMr.diagnoseConnection"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "gitlabMr.selectRepository",
+        "title": "选择工作区 GitLab 仓库",
+        "category": "GitLab MR",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "gitlabMr.diagnoseConnection",
+        "title": "诊断 GitLab 连接",
+        "category": "GitLab MR",
+        "icon": "$(pulse)"
+      },
       {
         "command": "gitlabMr.filterBranchStatus",
         "title": "筛选分支状态与更新时间",
@@ -489,6 +503,21 @@
           "minimum": 30,
           "maximum": 600,
           "description": "状态栏待审批 MR 数量的静默刷新间隔（秒），不会重置正在查看的 MR 差异。"
+        },
+        "gitlabMr.branchTemplates.release": {
+          "type": "string",
+          "default": "release/{version}",
+          "description": "Release 分支模板。可用变量：{version}、{base}。"
+        },
+        "gitlabMr.branchTemplates.hotfix": {
+          "type": "string",
+          "default": "hotfix/{version}/{issue}{descriptionSuffix}",
+          "description": "Hotfix 分支模板。可用变量：{version}、{issue}、{description}、{descriptionSuffix}、{base}。"
+        },
+        "gitlabMr.branchTemplates.conflict": {
+          "type": "string",
+          "default": "conflict/{source}",
+          "description": "Conflict 分支模板。可用变量：{source}；生成结果必须以 conflict/ 开头。"
         }
       }
     },
@@ -588,6 +617,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "gitlabMr.selectRepository",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation@0"
+        },
+        {
+          "command": "gitlabMr.diagnoseConnection",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation@0.5"
+        },
         {
           "command": "gitlabMr.filterBranchStatus",
           "when": "view == gitlabMr.releaseReadiness",
@@ -782,7 +821,7 @@
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",
-    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js",
+    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts ./test/branchPolicy.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js && node dist/branchPolicy.test.js",
     "test:providers": "esbuild ./test/providers.test.ts --bundle --outfile=dist/providers.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/providers.test.js",
     "test:conflict-session": "esbuild ./test/conflictSession.test.ts ./test/conflictApi.test.ts ./test/reviewStatus.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/conflictSession.test.js && node dist/conflictApi.test.js && node dist/reviewStatus.test.js",
     "test:loading": "esbuild ./test/loading.test.ts --bundle --outfile=dist/loading.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/loading.test.js",

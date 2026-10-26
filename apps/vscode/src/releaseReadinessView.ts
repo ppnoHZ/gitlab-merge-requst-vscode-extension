@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { defaultBranchPolicy, validateManagedBranch } from './branchPolicy';
 import { getReleaseFeatureStatuses, ReleaseFeatureState, ReleaseFeatureStatus, ReleaseMergeRequest } from './releaseReadiness';
 import { BranchLatestCommit, GitLabBranchPage, GitLabPage } from './types';
 import { IssueLinkConfig, ResolvedIssueLink, resolveFeatureIssueLinks } from './issueLinks';
@@ -408,6 +409,18 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
       if (!directory) {
         item.contextValue = 'remoteBranch';
         item.description = branchPath === this.selectedBranch ? '当前选择' : undefined;
+        const config = vscode.workspace.getConfiguration('gitlabMr');
+        const policy = {
+          release: config.get<string>('branchTemplates.release', defaultBranchPolicy.release),
+          hotfix: config.get<string>('branchTemplates.hotfix', defaultBranchPolicy.hotfix),
+          conflict: config.get<string>('branchTemplates.conflict', defaultBranchPolicy.conflict)
+        };
+        const compliance = validateManagedBranch(branchPath, policy);
+        if (!compliance.valid) {
+          item.description = [item.description, '命名不符合规范'].filter(Boolean).join(' · ');
+          item.tooltip = `${item.tooltip}\n${compliance.message}`;
+          item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
+        }
         item.command = {
           command: 'gitlabMr.checkReleaseReadiness',
           title: '选择远程分支',

@@ -11,11 +11,11 @@ async function run() {
   const session = () => stored.get('gitlabMr.conflictSessions.v1')[0] as ConflictSession;
   const tokens = { getToken: async () => 'test', promptForToken: async () => undefined } as any;
   const names = ['getBranchCreationRef', 'createRemoteBranch', 'closeConflictOriginal', 'getMergeRequestsTargetingBranch',
-    'createMergeRequest', 'getReviewDetails', 'cleanupConflictBranch', 'getConflictResolution'] as const;
+    'createMergeRequest', 'getReviewDetails', 'cleanupConflictBranch', 'getConflictResolution', 'linkConflictMergeRequests'] as const;
   const originals = names.map(name => GitLabService.prototype[name]);
   const originalPick = vscode.window.showQuickPick, originalWarning = vscode.window.showWarningMessage, originalInput = vscode.window.showInputBox;
   let branchSha: string | undefined, originalClosed = false, closeFails = false, creates = 0, closeAttempts = 0;
-  let merged = false, cleaned = false, description = '';
+  let merged = false, cleaned = false, description = '', links = 0;
   try {
     (GitLabService.prototype as any).getBranchCreationRef = async (_project: number, _kind: string, name: string) => {
       if (name === 'release/1') return { name, sha: sourceSha, title: '' };
@@ -53,6 +53,9 @@ async function run() {
       diff_refs: { head_sha: resolvedSha, base_sha: targetSha, start_sha: targetSha }
     };
     (GitLabService.prototype as any).cleanupConflictBranch = async () => { cleaned = true; };
+    (GitLabService.prototype as any).linkConflictMergeRequests = async (_project: number, originalIid: number, _originalUrl: string, replacementIid: number) => {
+      assert.equal(originalIid, 1); assert.equal(replacementIid, 9); links++;
+    };
     (vscode.window as any).showQuickPick = async (items: any[]) => items[0];
     (vscode.window as any).showWarningMessage = async (_message: string, _options: any, ...items: string[]) => items[0];
     (vscode.window as any).showInputBox = async (options: any) => options.value;
@@ -69,12 +72,13 @@ async function run() {
     branchSha = resolvedSha; closeFails = true;
     await assert.rejects(new ConflictSessions(state, tokens).resume(), /close failed/);
     assert.equal(session().stage, 'replacementCreated'); assert.equal(creates, 1); assert.equal(originalClosed, false);
+    assert.equal(links, 1, '替代 MR 创建后应双向关联，再尝试关闭原 MR');
     assert(description.includes('原冲突 MR：https://gitlab.test/g/p/-/merge_requests/1'));
     assert(description.includes('file.txt')); assert(description.includes('分支信息'));
 
     closeFails = false;
     await new ConflictSessions(state, tokens).resume();
-    assert.equal(session().stage, 'mr'); assert.equal(creates, 1); assert.equal(originalClosed, true); assert.equal(closeAttempts, 2);
+    assert.equal(session().stage, 'mr'); assert.equal(creates, 1); assert.equal(originalClosed, true); assert.equal(closeAttempts, 2); assert.equal(links, 1);
 
     const saved = session(); saved.stage = 'mrCreating'; saved.mr = undefined; originalClosed = false;
     await state.update('gitlabMr.conflictSessions.v1', [saved]);
