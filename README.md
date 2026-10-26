@@ -75,6 +75,7 @@ VSIX 发布前只执行扩展的 `test:publish` 本地逻辑测试和类型检�
 - VS Code 的 TreeView、QuickPick、SecretStorage 留在扩展中；OAuth、GitLab 凭据、Git 命令和检查任务留在后端。
 - 各 workspace 的测试在其自己的工作目录运行，扩展原有 manifest 和资源路径保持相对独立。
 - 不提交 `.env`、Token、仓库缓存、构建产物或 `node_modules`。
+- 每次改变 VS Code 扩展的用户可见功能、配置或操作流程时，必须在同一提交中同步更新 `apps/vscode/USER_GUIDE.md`。
 
 ### 新建发布分支
 
