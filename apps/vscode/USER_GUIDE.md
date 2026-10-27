@@ -521,6 +521,30 @@ Remote SSH / WSL 在**远端扩展宿主**保存，而非本地 UI 主机。容�
 
 本模块只覆盖本扩展可观察的操作，不追溯安装前历史，也不捕获浏览器、CLI、其他扩展或其他用户的操作。尚未在真实 GitLab、三平台卸载/重装或远端宿主环境完成验收，应按实际部署环境验证。
 
+## 十二、修改 Commit 历史（Interactive Rebase）
+
+可从以下入口执行 **修改当前分支的 Commit 历史（Interactive Rebase）**：
+
+- “分支管理”标题栏的 Commit 图标。
+- VS Code Source Control 标题栏的 Commit 图标。
+- 命令面板中的同名命令。
+
+操作步骤：
+
+1. 保证工作区没有已修改、已暂存或未跟踪文件。插件不会自动 stash。
+2. 选择需要改写的最近 Commit 范围。插件展示范围起点的短 SHA 和标题，并在集成终端执行固定格式的 `git rebase -i HEAD~N`。
+3. 在 Git 的交互式列表中使用 `reword` 修改 Message、`squash` 合并并编辑 Message、`fixup` 合并并丢弃旧 Message、`drop` 删除 Commit，或调整行顺序。
+4. 遇到冲突时使用 VS Code 合并编辑器解决并暂存文件，然后运行 **Continue Interactive Rebase**。仍有未解决冲突时插件会阻止继续。
+5. 需要放弃时运行 **Abort Interactive Rebase**，确认后在终端执行 `git rebase --abort`。
+
+安全限制：
+
+- 禁止在 `main`、`master`、`develop`、`dev`、`tst`、`uat`、`pre` 和所有 `release/*` 分支改写历史，也不支持 detached HEAD。
+- 已有 Rebase 任务时不能重复启动。至少需要两个可改写 Commit，最多展示最近 30 个；根 Commit 不进入选择范围。
+- 已存在远端跟踪分支时必须二次确认。Rebase 后 Commit SHA 会变化，已有 MR 必须重新 Review；普通 Push 通常会被拒绝。
+- 插件不自动 Push，也不提供自动 Force Push。确认远端没有他人新提交后，如确需更新个人分支，只能人工使用 `git push --force-with-lease`，不要使用 `--force`。
+- 交互列表和 `reword` Message 使用当前 Git 配置的编辑器。如果终端打开了不熟悉的编辑器，可先退出并配置，例如 `git config core.editor "code --wait"`，再重新操作。
+
 ## 新建发布与冲突处理分支
 
 命令面板搜索「新建 release 分支」「新建 hotfix 分支」或「新建 conflict 分支」，也可通过分支管理标题栏的新建按钮操作。

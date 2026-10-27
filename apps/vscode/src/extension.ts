@@ -22,6 +22,7 @@ import { ReleaseOverviewProvider } from './releaseOverviewView';
 import { WorkbenchFilters, pickWorkbenchFilters } from './workbenchFilters';
 import { RepositoryContext, selectedWorkspaceRepository, type WorkspaceRepository } from './repositoryContext';
 import { showConnectionDiagnostics } from './connectionDiagnostics';
+import { abortInteractiveRebase, continueInteractiveRebase, startInteractiveRebase } from './interactiveRebase';
 
 let statusBarItem: vscode.StatusBarItem;
 
@@ -77,6 +78,11 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
   const conflictSessions = new ConflictSessions(context.globalState, tokenManager);
+  context.subscriptions.push(
+    registerCommand('gitlabMr.startInteractiveRebase', startInteractiveRebase),
+    registerCommand('gitlabMr.continueInteractiveRebase', continueInteractiveRebase),
+    registerCommand('gitlabMr.abortInteractiveRebase', abortInteractiveRebase)
+  );
   context.subscriptions.push(registerCommand('gitlabMr.continueConflict', () => conflictSessions.resume()));
   const conflictStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
   conflictStatus.command = 'gitlabMr.continueConflict';

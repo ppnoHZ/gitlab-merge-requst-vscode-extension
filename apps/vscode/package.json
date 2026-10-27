@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -62,10 +62,29 @@
     "onCommand:gitlabMr.continueConflict",
     "onCommand:gitlabMr.showApprovalInbox",
     "onCommand:gitlabMr.selectRepository",
-    "onCommand:gitlabMr.diagnoseConnection"
+    "onCommand:gitlabMr.diagnoseConnection",
+    "onCommand:gitlabMr.startInteractiveRebase",
+    "onCommand:gitlabMr.continueInteractiveRebase",
+    "onCommand:gitlabMr.abortInteractiveRebase"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "gitlabMr.startInteractiveRebase",
+        "title": "修改当前分支的 Commit 历史（Interactive Rebase）",
+        "category": "GitLab MR",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "gitlabMr.continueInteractiveRebase",
+        "title": "继续 Interactive Rebase",
+        "category": "GitLab MR"
+      },
+      {
+        "command": "gitlabMr.abortInteractiveRebase",
+        "title": "放弃 Interactive Rebase",
+        "category": "GitLab MR"
+      },
       {
         "command": "gitlabMr.selectRepository",
         "title": "选择工作区 GitLab 仓库",
@@ -633,6 +652,11 @@
       ],
       "view/title": [
         {
+          "command": "gitlabMr.startInteractiveRebase",
+          "when": "view == gitlabMr.releaseReadiness",
+          "group": "navigation@0.8"
+        },
+        {
           "command": "gitlabMr.selectRepository",
           "when": "view == gitlabMr.releaseReadiness",
           "group": "navigation@0"
@@ -821,6 +845,13 @@
           "when": "view == gitlabMr.pendingReviews && viewItem =~ /^(pendingReviewRequest|authoredMergeRequest)/",
           "group": "conflict"
         }
+      ],
+      "scm/title": [
+        {
+          "command": "gitlabMr.startInteractiveRebase",
+          "when": "scmProvider == git",
+          "group": "navigation"
+        }
       ]
     }
   },
@@ -836,7 +867,7 @@
     "test:filters": "esbuild ./test/workbenchFilters.test.ts --bundle --outfile=dist/workbenchFilters.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/workbenchFilters.test.js",
     "test:release-overview": "esbuild ./test/releaseOverview.test.ts --bundle --outfile=dist/releaseOverview.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/releaseOverview.test.js",
     "test:audit": "esbuild ./test/audit.test.ts ./test/auditView.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/audit.test.js && node dist/auditView.test.js",
-    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts ./test/branchPolicy.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js && node dist/branchPolicy.test.js",
+    "test:branch-creation": "esbuild ./test/branchCreation.test.ts ./test/conflictWorkflow.test.ts ./test/branchPolicy.test.ts ./test/interactiveRebase.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/branchCreation.test.js && node dist/conflictWorkflow.test.js && node dist/branchPolicy.test.js && node dist/interactiveRebase.test.js",
     "test:providers": "esbuild ./test/providers.test.ts --bundle --outfile=dist/providers.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/providers.test.js",
     "test:conflict-session": "esbuild ./test/conflictSession.test.ts ./test/conflictApi.test.ts ./test/reviewStatus.test.ts --bundle --outdir=dist --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/conflictSession.test.js && node dist/conflictApi.test.js && node dist/reviewStatus.test.js",
     "test:loading": "esbuild ./test/loading.test.ts --bundle --outfile=dist/loading.test.js --platform=node --alias:vscode=./test/vscodeMock.ts && node dist/loading.test.js",
