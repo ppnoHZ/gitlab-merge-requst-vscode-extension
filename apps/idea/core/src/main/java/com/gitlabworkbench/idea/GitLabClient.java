@@ -151,6 +151,27 @@ public final class GitLabClient {
             throw new IllegalStateException("创建结果尚未确认，请查询同名分支后再操作，不要重复创建");
         }
     }
+    public List<Ref> allBranches(long project, String search) {
+        List<Ref> result = new ArrayList<>();
+        for (int number = 1; number != 0;) {
+            Page<Ref> loaded = refs(project, "branch", number, search);
+            result.addAll(loaded.items()); number = loaded.next();
+            if (result.size() > 100000) throw new IllegalStateException("分支过多，请缩小搜索范围");
+        }
+        return List.copyOf(result);
+    }
+    public List<Mr> targetingMrs(long project, String target) {
+        return all("/projects/" + project + "/merge_requests?state=all&target_branch=" + enc(target)).stream()
+            .map(GitLabClient::mr).filter(value -> value.target().equals(target)).toList();
+    }
+    public Mr createBranchMr(long project, String source, String target, String title, String description) {
+        if (source.equals(target) || title.isBlank()) throw new IllegalArgumentException("MR 源目标或标题无效");
+        if (matchingMrs(project, source, target).stream().anyMatch(value -> value.state().equals("opened"))) throw new IllegalStateException("已有同源同目标的开放 MR，请先打开已有 MR");
+        JsonObject body = new JsonObject(); body.addProperty("source_branch", source); body.addProperty("target_branch", target);
+        body.addProperty("title", title); body.addProperty("description", description);
+        body.addProperty("remove_source_branch", true); body.addProperty("squash", false);
+        return mr(request("POST", "/projects/" + project + "/merge_requests", body).data.getAsJsonObject());
+    }
     public Mr mr(long project, long iid) { return mr(get("/projects/" + project + "/merge_requests/" + iid)); }
     public Todos todos() {
         long user = id(get("/user"), "id");

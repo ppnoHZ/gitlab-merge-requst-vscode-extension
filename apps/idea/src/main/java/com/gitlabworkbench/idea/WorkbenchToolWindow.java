@@ -39,6 +39,9 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private final JList<Todo> todoList = new JBList<>(todos);
         private final List<JButton> buttons = new ArrayList<>();
         private final JButton more;
+        private final javax.swing.tree.DefaultMutableTreeNode branchRoot = new javax.swing.tree.DefaultMutableTreeNode("远程分支");
+        private final JTree branchTree = new JTree(branchRoot);
+        private final JCheckBox commonOnly = new JCheckBox("仅常用分支", true);
         private GitLabClient.Todos displayed;
         private GitLabClient.Repo repo;
         private String loadedInstance = "", loadedPath = "", loadedSearch = "";
@@ -63,8 +66,25 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                     GitLabClient.Ref ref = (GitLabClient.Ref)value; setText(ref.name() + "  " + ref.sha().substring(0, 8)); return this;
                 }
             });
-            branchPanel.add(new JBScrollPane(branchList), BorderLayout.CENTER);
+            branchTree.setRootVisible(false);
+            branchTree.setShowsRootHandles(true);
+            branchPanel.add(new JBScrollPane(branchTree), BorderLayout.CENTER);
+            JPanel branchActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            branchActions.add(commonOnly); commonOnly.addActionListener(event -> rebuildBranchTree());
+            branchActions.add(button("复制名称", () -> {
+                var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
+                if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支，不能选择目录");
+                com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(new java.awt.datatransfer.StringSelection(ref.name()));
+            }));
+            branchActions.add(button("打开分支", () -> {
+                var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
+                if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支");
+                BrowserUtil.browse(loadedInstance + "/" + loadedPath + "/-/tree/" + java.net.URLEncoder.encode(ref.name(), java.nio.charset.StandardCharsets.UTF_8));
+            }));
+            query.add(branchActions, BorderLayout.SOUTH);
             JPanel branchFooter = new JPanel(new BorderLayout()); more = button("加载更多", () -> loadBranches(true)); branchFooter.add(more, BorderLayout.EAST); branchFooter.add(branchStatus, BorderLayout.CENTER); branchPanel.add(branchFooter, BorderLayout.SOUTH);
+            branchActions.add(button("检查分支 / release", this::inspectBranch));
+            branchActions.add(button("创建 MR", this::createBranchMr));
             tabs.addTab("分支管理", branchPanel);
             JPanel todoPanel = new JPanel(new BorderLayout());
             todoList.setCellRenderer(new DefaultListCellRenderer() {
@@ -98,7 +118,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             buttons.forEach(button -> button.setEnabled(!service.busy())); more.setEnabled(!service.busy() && next > 0);
             WorkbenchSettings.Data config = service.settings().getState();
             if (!loadedInstance.isEmpty() && (!loadedInstance.equals(config.instance) || !loadedPath.equals(config.projectPath))) {
-                branches.clear(); next = 0; repo = null; branchStatus.setText("连接已变更，请重新加载分支"); more.setEnabled(false);
+                branches.clear(); rebuildBranchTree(); next = 0; repo = null; branchStatus.setText("连接已变更，请重新加载分支"); more.setEnabled(false);
             }
             if (displayed != service.todos) {
                 Todo selection = todoList.getSelectedValue(); displayed = service.todos; todos.clear();
@@ -119,19 +139,87 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             String query = append ? loadedSearch : search.getText().trim(); int page = append ? next : 1;
             if (page == 0) return;
             branchLoading = true; branchStatus.setText("正在加载，保留已有分支…");
-            run(() -> { var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath()); return new Object[]{connection, project, api.refs(project.id(), "branch", page, query)}; }, result -> {
+            run(() -> { var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath()); return new Object[]{connection, project, api.allBranches(project.id(), query)}; }, result -> {
                 branchLoading = false;
                 var connection = (WorkbenchService.Connection)result[0]; repo = (GitLabClient.Repo)result[1];
-                @SuppressWarnings("unchecked") var refs = (GitLabClient.Page<GitLabClient.Ref>)result[2];
-                if (!append) branches.clear();
-                Set<String> names = new HashSet<>(); for (int i = 0; i < branches.size(); i++) names.add(branches.get(i).name());
-                for (var ref : refs.items()) if (names.add(ref.name())) branches.addElement(ref);
-                next = refs.next(); loadedSearch = query; loadedInstance = connection.instance(); loadedPath = connection.projectPath();
-                branchStatus.setText("已加载 " + branches.size() + " 个分支" + (next > 0 ? " · 还有下一页" : "")); render();
+                @SuppressWarnings("unchecked") var refs = (List<GitLabClient.Ref>)result[2];
+                branches.clear(); refs.forEach(branches::addElement); rebuildBranchTree();
+                next = 0; loadedSearch = query; loadedInstance = connection.instance(); loadedPath = connection.projectPath();
+                branchStatus.setText("已加载 " + branches.size() + " 个远程分支"); render();
             });
         }
+        private GitLabClient.Ref selectedBranch() {
+            var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
+            if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择真实分支");
+            if (!loadedInstance.equals(service.settings().getState().instance) || !loadedPath.equals(service.settings().getState().projectPath)) throw new IllegalStateException("连接已变化，请刷新");
+            return ref;
+        }
+        private void inspectBranch() {
+            var selected = selectedBranch();
+            run(() -> {
+                var api = service.connection().api(); var source = api.ref(repo.id(), "branch", selected.name());
+                var requests = api.targetingMrs(repo.id(), selected.name());
+                StringBuilder text = new StringBuilder("分支：" + source.name() + "\nSHA：" + source.sha() + "\n\n以此分支为目标的 MR：\n");
+                for (var mr : requests) text.append("!").append(mr.iid()).append(" · ").append(mr.state()).append(" · ").append(mr.source()).append("\n").append(mr.url()).append("\n");
+                if (source.name().startsWith("release/")) {
+                    String version = source.name().split("/")[1];
+                    text.append("\n同版本 feature 分支：\n");
+                    for (var feature : api.allBranches(repo.id(), "^feature/" + version + "/")) {
+                        if (!feature.name().startsWith("feature/" + version + "/")) continue;
+                        var matching = requests.stream().filter(mr -> mr.source().equals(feature.name())).toList();
+                        text.append(feature.name()).append(" · ").append(matching.isEmpty() ? "尚未创建 MR" : matching.stream().map(mr -> "!" + mr.iid() + " " + mr.state()).toList()).append("\n");
+                    }
+                }
+                return text.toString();
+            }, text -> new TextDialog(project, "分支检查", "分支检查", text, false).showAndGet());
+        }
+        private void createBranchMr() {
+            var selected = selectedBranch();
+            String target = Messages.showInputDialog(project, "目标分支", "创建 MR", Messages.getQuestionIcon());
+            if (target == null || target.isBlank()) return;
+            run(() -> {
+                var api = service.connection().api(); var source = api.ref(repo.id(), "branch", selected.name()); var destination = api.ref(repo.id(), "branch", target.trim());
+                var diff = api.compare(repo.id(), source.sha(), destination.sha());
+                return new Object[]{source, destination, BranchRules.description(source.name(), destination.name(), diff.commits(), diff.files(), "")};
+            }, preview -> {
+                var source = (GitLabClient.Ref)preview[0]; var destination = (GitLabClient.Ref)preview[1];
+                TextDialog dialog = new TextDialog(project, "创建 MR", source.name() + " 合并到 " + destination.name(), (String)preview[2], true);
+                if (!dialog.showAndGet() || !confirm("确认创建 " + source.name() + " → " + destination.name() + "？", "创建 MR")) return;
+                run(() -> {
+                    var api = service.connection().api();
+                    if (!api.ref(repo.id(), "branch", source.name()).sha().equals(source.sha()) || !api.ref(repo.id(), "branch", destination.name()).sha().equals(destination.sha())) throw new IllegalStateException("分支已变化，请重新预览");
+                    return api.createBranchMr(repo.id(), source.name(), destination.name(), dialog.title.getText(), dialog.text.getText());
+                }, mr -> BrowserUtil.browse(mr.url()));
+            });
+        }
+
+        private void rebuildBranchTree() {
+            branchRoot.removeAllChildren();
+            List<GitLabClient.Ref> sorted = new ArrayList<>();
+            for (int i = 0; i < branches.size(); i++) sorted.add(branches.get(i));
+            sorted.sort(Comparator.comparing(GitLabClient.Ref::name));
+            for (var ref : sorted) {
+                if (commonOnly.isSelected() && !ref.name().matches("^(feature|release|bugfix|hotfix|conflict)/.*|^(main|dev|tst|uat|pre)$")) continue;
+                String[] parts = ref.name().split("/");
+                var parent = branchRoot;
+                for (int i = 0; i < parts.length - 1; i++) {
+                    javax.swing.tree.DefaultMutableTreeNode found = null;
+                    for (int j = 0; j < parent.getChildCount(); j++) {
+                        var child = (javax.swing.tree.DefaultMutableTreeNode)parent.getChildAt(j);
+                        if (parts[i].equals(child.getUserObject())) { found = child; break; }
+                    }
+                    if (found == null) { found = new javax.swing.tree.DefaultMutableTreeNode(parts[i]); parent.add(found); }
+                    parent = found;
+                }
+                parent.add(new javax.swing.tree.DefaultMutableTreeNode(ref) {
+                    @Override public String toString() { return parts[parts.length - 1] + " · " + ref.sha().substring(0, 8); }
+                });
+            }
+            ((javax.swing.tree.DefaultTreeModel)branchTree.getModel()).reload();
+        }
         private void createBranch(String kind) {
-            String defaultBase = branchList.getSelectedValue() != null ? branchList.getSelectedValue().name() : repo == null ? "main" : repo.defaultBranch();
+            var selectedNode = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
+            String defaultBase = selectedNode != null && selectedNode.getUserObject() instanceof GitLabClient.Ref ref ? ref.name() : repo == null ? "main" : repo.defaultBranch();
             Fields dialog = new Fields(project, "新建 " + kind, new String[]{"基线类型（branch / tag）", "基线名称（hotfix 建议使用线上 Tag）", "版本号", "工单号（hotfix 必填）", "英文短描述（可选）"}, new String[]{"branch", defaultBase, "", "", ""}, -1);
             if (!dialog.showAndGet()) return;
             String baseKind = dialog.value(0).trim(), baseName = dialog.value(1).trim();
