@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.19.0"
 }
 group = "com.gitlabworkbench"
-version = "0.1.1"
+version = "0.1.2"
 repositories {
     mavenCentral()
     intellijPlatform { defaultRepositories() }

@@ -38,6 +38,8 @@ class GitLabClientTest {
             return;
         }
         if (exchange.getRequestMethod().equals("PUT")) { closed = true; send(exchange, mode.equals("lost") ? 500 : 200, mr(1, "release/1", "closed")); return; }
+        if (mode.equals("delete-test") && exchange.getRequestMethod().equals("DELETE")) { posts.incrementAndGet(); exchange.sendResponseHeaders(204, -1); exchange.close(); return; }
+        if (path.endsWith("/merge_base")) { send(exchange, 200, "{\"id\":\"" + (mode.equals("not-ancestor") ? OTHER : SHA) + "\"}"); return; }
         if (path.endsWith("/user")) { send(exchange, 200, "{\"id\":7}"); return; }
         if (path.endsWith("/projects/g/p")) { send(exchange, 200, "{\"id\":3,\"path_with_namespace\":\"g/p\",\"web_url\":\"https://gitlab.test/g/p\",\"default_branch\":\"main\"}"); return; }
         if (path.endsWith("/branches")) {
@@ -47,7 +49,9 @@ class GitLabClientTest {
         if (path.contains("/branches/")) {
             String name = path.substring(path.indexOf("/branches/") + 10);
             if (!Set.of("main", "tst", "release/1").contains(name) && !created) { send(exchange, mode.equals("denied") ? 403 : 404, "{}"); return; }
-            send(exchange, 200, ref(name, mode.equals("changed") ? OTHER : SHA)); return;
+            String payload = ref(name, mode.equals("changed") ? OTHER : SHA);
+            if (mode.equals("delete-test") || mode.equals("protected")) { JsonObject value = JsonParser.parseString(payload).getAsJsonObject(); value.addProperty("protected", mode.equals("protected")); value.addProperty("default", name.equals("main")); payload = value.toString(); }
+            send(exchange, 200, payload); return;
         }
         if (path.contains("/tags/")) { send(exchange, 200, ref("v1", SHA)); return; }
         if (path.endsWith("/compare")) { send(exchange, 200, "{\"compare_timeout\":" + mode.equals("truncated") + ",\"commits\":[{\"short_id\":\"abc\",\"title\":\"change\"}],\"diffs\":[{\"new_path\":\"actual.txt\",\"old_path\":\"actual.txt\"}]}"); return; }
@@ -62,6 +66,16 @@ class GitLabClientTest {
     static String ref(String name, String sha) { JsonObject result = new JsonObject(); result.addProperty("name", name); JsonObject commit = new JsonObject(); commit.addProperty("id", sha); result.add("commit", commit); return result.toString(); }
     static String mr(long iid, String source, String state) { return "{\"id\":" + (iid + 100) + ",\"iid\":" + iid + ",\"project_id\":3,\"source_project_id\":3,\"target_project_id\":3,\"title\":\"MR\",\"source_branch\":\"" + source + "\",\"target_branch\":\"tst\",\"sha\":\"" + SHA + "\",\"state\":\"" + state + "\",\"web_url\":\"https://gitlab.test/mr/" + iid + "\",\"has_conflicts\":true,\"detailed_merge_status\":\"conflict\",\"reviewers\":[{\"id\":7}]}"; }
     void send(HttpExchange exchange, int status, String content) throws Exception { byte[] bytes = content.getBytes(StandardCharsets.UTF_8); exchange.sendResponseHeaders(status, bytes.length); exchange.getResponseBody().write(bytes); exchange.close(); }
+    @Test void ancestryAndSafeDeletion() {
+        assertTrue(api.mergedIntoMain(3, SHA, OTHER));
+        mode = "not-ancestor"; assertFalse(api.mergedIntoMain(3, SHA, OTHER));
+        assertThrows(IllegalStateException.class, () -> api.deleteMergedBranch(3, "main", "main", SHA));
+        assertThrows(IllegalStateException.class, () -> api.deleteMergedBranch(3, "release/1", "release/1", SHA));
+        mode = "protected"; assertThrows(IllegalStateException.class, () -> api.deleteMergedBranch(3, "release/1", "main", SHA));
+        mode = "normal"; assertThrows(IllegalStateException.class, () -> api.deleteMergedBranch(3, "release/1", "main", SHA));
+        mode = "delete-test"; assertThrows(IllegalStateException.class, () -> api.deleteMergedBranch(3, "release/1", "main", OTHER));
+        api.deleteMergedBranch(3, "release/1", "main", SHA); assertEquals(1, posts.get());
+    }
     @Test void paginationAndEncodedProjectPaths() { assertEquals(3, api.project("g/p").id()); var page = api.refs(3, "branch", 1, "^release/"); assertEquals(2, page.next()); assertEquals("release/2", api.refs(3, "branch", page.next(), "^release/").items().getFirst().name()); assertTrue(paths.stream().anyMatch(path -> path.contains("g%2Fp"))); }
     @Test void branchCreateUsesPinnedShaAndDoesNotOverwrite() { api.createBranch(3, "release/2", "tag", "v1", SHA); assertEquals(SHA, body.get("ref").getAsString()); assertThrows(IllegalStateException.class, () -> api.createBranch(3, "release/2", "tag", "v1", SHA)); assertEquals(1, posts.get()); }
     @Test void changedBaselineAnd403DoNotCreate() { mode = "changed"; assertThrows(IllegalStateException.class, () -> api.createBranch(3, "release/2", "branch", "main", SHA)); mode = "denied"; assertThrows(GitLabClient.ApiException.class, () -> api.createBranch(3, "release/2", "branch", "main", SHA)); assertEquals(0, posts.get()); }

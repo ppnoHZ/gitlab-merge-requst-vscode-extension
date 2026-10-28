@@ -70,6 +70,7 @@ public final class GitLabClient {
         try {
             HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) throw new ApiException(httpError(response.statusCode(), path), response.statusCode());
+            if (method.equals("DELETE") && response.statusCode() == 204) return new Response(new JsonObject(), 0);
             JsonElement data;
             try {
                 data = JsonParser.parseString(response.body());
@@ -150,6 +151,24 @@ public final class GitLabClient {
             try { Ref actual = ref(project, "branch", name); if (actual.sha.equals(expectedSha)) return actual; } catch (RuntimeException ignored) {}
             throw new IllegalStateException("创建结果尚未确认，请查询同名分支后再操作，不要重复创建");
         }
+    }
+    /** Exact graph ancestry: conservative for squash/rebase, never authorizes from historical MR state. */
+    public boolean mergedIntoMain(long project, String branchSha, String mainSha) {
+        requireSha(branchSha); requireSha(mainSha);
+        if (branchSha.equals(mainSha)) return true;
+        JsonObject base = get("/projects/" + project + "/repository/merge_base?refs%5B%5D=" + enc(branchSha) + "&refs%5B%5D=" + enc(mainSha));
+        String ancestor = str(base, "id"); requireSha(ancestor);
+        return ancestor.equals(branchSha);
+    }
+    public void deleteMergedBranch(long project, String name, String defaultBranch, String expectedSha) {
+        if (name.equals("main") || name.equals(defaultBranch)) throw new IllegalStateException("禁止删除 main 或项目默认分支");
+        JsonObject branch = get("/projects/" + project + "/repository/branches/" + enc(name));
+        if (!branch.has("protected") || !branch.has("default") || bool(branch, "protected") || bool(branch, "default")) throw new IllegalStateException("受保护分支或保护状态未知，禁止删除");
+        if (!ref(branch).sha().equals(expectedSha)) throw new IllegalStateException("分支已变化，请刷新后重新确认");
+        Ref main = ref(project, "branch", "main");
+        if (!mergedIntoMain(project, expectedSha, main.sha())) throw new IllegalStateException("最新代码未确认合入 main，禁止删除");
+        if (!ref(project, "branch", name).sha().equals(expectedSha) || !ref(project, "branch", "main").sha().equals(main.sha())) throw new IllegalStateException("检查期间分支已变化，取消删除");
+        request("DELETE", "/projects/" + project + "/repository/branches/" + enc(name), null);
     }
     public List<Ref> allBranches(long project, String search) {
         List<Ref> result = new ArrayList<>();
