@@ -72,7 +72,13 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             branchTree.setShowsRootHandles(true);
             branchPanel.add(new JBScrollPane(branchTree), BorderLayout.CENTER);
             JPanel branchActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            branchActions.add(commonOnly); commonOnly.addActionListener(event -> rebuildBranchTree());
+            commonOnly.setSelected(service.settings().getState().commonBranchesOnly);
+            branchActions.add(commonOnly); commonOnly.addActionListener(event -> { service.settings().getState().commonBranchesOnly = commonOnly.isSelected(); rebuildBranchTree(); });
+            JComboBox<String> stateFilter = new JComboBox<>(new String[]{"全部", "已合入 main", "未合入 main", "main 状态未知"});
+            stateFilter.setSelectedItem(service.settings().getState().mainFilter);
+            stateFilter.addActionListener(event -> { service.settings().getState().mainFilter = (String)stateFilter.getSelectedItem(); rebuildBranchTree(); });
+            branchActions.add(stateFilter);
+            branchActions.add(button("分支设置", this::branchSettings));
             branchActions.add(button("复制名称", () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
                 if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支，不能选择目录");
@@ -176,6 +182,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
             boolean allowed = node != null && node.getUserObject() instanceof GitLabClient.Ref ref
                 && "已合入 main".equals(mainStates.get(ref.name())) && repo != null
+                && service.settings().getState().allowBranchDeletion
                 && !ref.name().equals("main") && !ref.name().equals(repo.defaultBranch());
             deleteBranchButton.setVisible(allowed);
             deleteBranchButton.setEnabled(allowed && !service.busy());
@@ -216,7 +223,11 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         }
         private void createBranchMr() {
             var selected = selectedBranch();
-            String target = Messages.showInputDialog(project, "目标分支", "创建 MR", Messages.getQuestionIcon());
+            List<String> targets = new ArrayList<>(); for (int i = 0; i < branches.size(); i++) targets.add(branches.get(i).name());
+            targets = BranchRules.recommendedTargets(selected.name(), targets);
+            if (targets.isEmpty()) throw new IllegalStateException("当前搜索范围没有符合合并规范的目标分支，请清空搜索后刷新");
+            int targetIndex = Messages.showChooseDialog(project, "选择规范推荐的目标分支", "创建 MR", null, targets.toArray(String[]::new), targets.get(0));
+            String target = targetIndex < 0 ? null : targets.get(targetIndex);
             if (target == null || target.isBlank()) return;
             run(() -> {
                 var api = service.connection().api(); var source = api.ref(repo.id(), "branch", selected.name()); var destination = api.ref(repo.id(), "branch", target.trim());
@@ -240,6 +251,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             for (int i = 0; i < branches.size(); i++) sorted.add(branches.get(i));
             sorted.sort(Comparator.comparing(GitLabClient.Ref::name));
             for (var ref : sorted) {
+                String filter = service.settings().getState().mainFilter;
+                if (!"全部".equals(filter) && !filter.equals(mainStates.getOrDefault(ref.name(), "main 状态未知"))) continue;
                 if (commonOnly.isSelected() && !ref.name().matches("^(feature|release|bugfix|hotfix|conflict)/.*|^(main|dev|tst|uat|pre)$")) continue;
                 String[] parts = ref.name().split("/");
                 var parent = branchRoot;
@@ -258,6 +271,17 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             }
             ((javax.swing.tree.DefaultTreeModel)branchTree.getModel()).reload();
         }
+        private void branchSettings() {
+            var settings = service.settings().getState();
+            Fields dialog = new Fields(project, "分支设置", new String[]{"允许删除已合入分支（true / false，默认 false）", "release 模板", "hotfix 模板"}, new String[]{String.valueOf(settings.allowBranchDeletion), settings.releaseTemplate, settings.hotfixTemplate}, -1);
+            if (!dialog.showAndGet()) return;
+            if (!Set.of("true", "false").contains(dialog.value(0).trim())) throw new IllegalArgumentException("删除开关必须填写 true 或 false");
+            BranchRules.renderTemplate(dialog.value(1), "TEST", "FOC-1", "");
+            BranchRules.renderTemplate(dialog.value(2), "TEST", "FOC-1", "");
+            settings.allowBranchDeletion = Boolean.parseBoolean(dialog.value(0).trim());
+            settings.releaseTemplate = dialog.value(1); settings.hotfixTemplate = dialog.value(2);
+            updateDeleteButton(); rebuildBranchTree();
+        }
         private void createBranch(String kind) {
             var selectedNode = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
             String defaultBase = selectedNode != null && selectedNode.getUserObject() instanceof GitLabClient.Ref ref ? ref.name() : repo == null ? "main" : repo.defaultBranch();
@@ -265,7 +289,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             if (!dialog.showAndGet()) return;
             String baseKind = dialog.value(0).trim(), baseName = dialog.value(1).trim();
             if (!Set.of("branch", "tag").contains(baseKind)) throw new IllegalArgumentException("基线类型必须是 branch 或 tag");
-            String name = BranchRules.development(kind, dialog.value(2), dialog.value(3), dialog.value(4));
+            BranchRules.development(kind, dialog.value(2), dialog.value(3), dialog.value(4));
+            String name = BranchRules.renderTemplate(kind.equals("release") ? service.settings().getState().releaseTemplate : service.settings().getState().hotfixTemplate, dialog.value(2), dialog.value(3), dialog.value(4));
             run(() -> { var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath()); return new Prepared(connection, project, api.ref(project.id(), baseKind, baseName), name, baseKind); }, prepared -> {
                 if (!confirm("项目：" + prepared.repo.path() + "\n分支：" + name + "\n基线：" + prepared.base.name() + "\nSHA：" + prepared.base.sha() + "\n只创建远程分支。", "确认创建")) return;
                 run(() -> prepared.connection.api().createBranch(prepared.repo.id(), name, prepared.kind, prepared.base.name(), prepared.base.sha()), created -> {

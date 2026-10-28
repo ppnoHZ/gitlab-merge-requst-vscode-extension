@@ -25,6 +25,27 @@ public final class BranchRules {
         conflict(source);
         if (!Set.of("dev", "tst", "uat", "pre").contains(target)) throw new IllegalArgumentException("此入口仅支持 release/hotfix → dev/tst/uat/pre；其他场景请在原 Source 处理");
     }
+    public static String renderTemplate(String template, String version, String issue, String description) {
+        String result = template.replace("{version}", version.trim()).replace("{issue}", issue.trim())
+            .replace("{description}", description.trim()).replace("{descriptionSuffix}", description.isBlank() ? "" : "-" + description.trim());
+        if (result.contains("{") || result.length() > 240) throw new IllegalArgumentException("分支模板变量无效或名称过长");
+        for (String segment : result.split("/", -1)) if (!segment.matches("[A-Za-z0-9][A-Za-z0-9._-]*") || invalidSegment(segment)) throw new IllegalArgumentException("生成的分支名无效");
+        return result;
+    }
+    public static List<String> recommendedTargets(String source, List<String> candidates) {
+        String kind = source.split("/")[0];
+        return candidates.stream().filter(target -> !target.equals(source)).filter(target -> switch (kind) {
+            case "feature", "bugfix" -> target.startsWith("release/");
+            case "release", "hotfix" -> Set.of("main", "master", "dev", "tst", "uat", "pre").contains(target);
+            case "conflict" -> target.startsWith("release/") || Set.of("dev", "tst", "uat", "pre").contains(target);
+            case "main", "master" -> target.startsWith("release/") || Set.of("dev", "tst", "uat", "pre").contains(target);
+            case "revert" -> target.startsWith("release/") || Set.of("main", "master", "dev", "tst", "uat", "pre").contains(target);
+            default -> false;
+        }).sorted(java.util.Comparator.comparingInt(target -> {
+            String[] parts = source.split("/");
+            return parts.length > 1 && target.equals("release/" + parts[1]) ? 0 : 1;
+        })).toList();
+    }
     private static boolean invalidSegment(String value) { return value.contains("..") || value.endsWith(".") || value.endsWith(".lock"); }
     public static String description(String source, String target, List<String> commits, List<String> files, String originalUrl) {
         String issue = "待补充真实工单";
