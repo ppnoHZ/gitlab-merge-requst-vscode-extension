@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
+import { existsSync } from 'fs';
 import * as vscode from 'vscode';
 import { GitCommitInfo, GitRepoInfo, MainMergeResult } from './types';
 import { debugLog } from './diagnosticLogging';
@@ -11,6 +12,43 @@ export class GitService {
   private static readonly mergeCache = new Map<string, Promise<boolean>>();
   private static readonly checks = new Map<string, Promise<MainMergeResult>>();
   constructor(private readonly workspaceRoot: string) {}
+
+  async getWorkingTreeChanges(): Promise<string[]> {
+    return (await this.runGit(['status', '--porcelain=v1', '--untracked-files=all']))
+      .split('\n').filter(Boolean);
+  }
+
+  async getRecentCommitSummaries(limit = 30): Promise<Array<{ hash: string; shortHash: string; title: string }>> {
+    const safeLimit = Math.max(2, Math.min(50, Math.trunc(limit)));
+    const count = Number(await this.runGit(['rev-list', '--count', 'HEAD']));
+    // HEAD~N requires one parent before the selected range, so never include the root commit.
+    const available = Math.max(0, Math.min(safeLimit, count - 1));
+    if (!available) return [];
+    return (await this.runGit(['log', '--first-parent', `-${available}`, '--format=%H%x09%h%x09%s', 'HEAD']))
+      .split('\n').filter(Boolean).map(line => {
+        const [hash, shortHash, ...title] = line.split('\t');
+        return { hash, shortHash, title: title.join('\t') };
+      });
+  }
+
+  async hasRemoteTrackingBranch(branch: string): Promise<boolean> {
+    try { await this.runGit(['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`]); return true; }
+    catch { return false; }
+  }
+
+  async getUnmergedFiles(): Promise<string[]> {
+    return (await this.runGit(['diff', '--name-only', '--diff-filter=U'])).split('\n').filter(Boolean);
+  }
+
+  async isRebaseInProgress(): Promise<boolean> {
+    for (const name of ['rebase-merge', 'rebase-apply']) {
+      try {
+        const gitPath = await this.runGit(['rev-parse', '--git-path', name]);
+        if (existsSync(path.isAbsolute(gitPath) ? gitPath : path.resolve(this.workspaceRoot, gitPath))) return true;
+      } catch { /* Invalid repositories are reported by the calling operation. */ }
+    }
+    return false;
+  }
 
   private runGit(args: string[], mergeConflictExpected = false): Promise<string> {
     return new Promise((resolve, reject) => {

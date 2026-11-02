@@ -240,6 +240,18 @@ export class GitLabService implements RepositoryProvider {
     });
   }
 
+  async linkConflictMergeRequests(project: number, originalIid: number, originalUrl: string, replacementIid: number, replacementUrl: string): Promise<void> {
+    if (![project, originalIid, replacementIid].every(value => Number.isSafeInteger(value) && value > 0) ||
+      ![originalUrl, replacementUrl].every(value => /^https?:\/\//i.test(value))) throw new Error('无效的 conflict MR 关联参数。');
+    const ensureNote = async (iid: number, marker: string, body: string) => {
+      const notes = await this.getAllPages<{ body?: string }>(`/projects/${project}/merge_requests/${iid}/notes?sort=desc&order_by=created_at`);
+      if (notes.some(note => note.body?.includes(marker))) return;
+      await this.request(`/projects/${project}/merge_requests/${iid}/notes`, { method: 'POST', body: { body: `${body}\n\n${marker}` } });
+    };
+    await ensureNote(originalIid, `<!-- gitlab-workbench-conflict:${replacementIid} -->`, `Conflict 处理已创建替代 MR：${replacementUrl}`);
+    await ensureNote(replacementIid, `<!-- gitlab-workbench-original:${originalIid} -->`, `此 MR 替代原冲突 MR：${originalUrl}`);
+  }
+
   async getConflictResolution(project: number, branch: string, targetSha: string, sourceSha: string): Promise<ConflictResolution> {
     const validSha = (value: unknown): value is string => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value);
     if (!Number.isSafeInteger(project) || project <= 0 || !branch.startsWith('conflict/') || !validSha(targetSha) || !validSha(sourceSha)) {

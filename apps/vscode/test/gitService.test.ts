@@ -168,6 +168,12 @@ async function runTests(): Promise<void> {
     assert.deepEqual(await service.getChangedFiles('main', 'main'), []);
     await assert.rejects(service.getCommitsBetween('missing-description-ref', 'main'), /找不到分支引用/);
     await assert.rejects(service.getChangedFiles('missing-description-ref', 'main'), /找不到分支引用/);
+    assert((await service.getWorkingTreeChanges()).length >= 2, 'modified and untracked files must block history rewriting');
+    assert((await service.getRecentCommitSummaries(5)).length >= 2);
+    assert.equal(await service.hasRemoteTrackingBranch('main'), true);
+    assert.equal(await service.hasRemoteTrackingBranch('missing'), false);
+    assert.deepEqual(await service.getUnmergedFiles(), []);
+    assert.equal(await service.isRebaseInProgress(), false);
     git(checkout, 'remote', 'remove', 'origin');
     await assert.rejects(service.getBranchesMergedIntoMain(branches), /origin/);
     console.log('[PASS] main merge checks: normal/squash/rebase, pending/conflicts, fresh remote refs, unchanged worktree, errors');

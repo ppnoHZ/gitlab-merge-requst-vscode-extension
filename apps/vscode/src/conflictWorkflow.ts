@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
-import { conflictBranchName, type BranchReference } from '@gitlab-workbench/core';
+import { type BranchReference } from '@gitlab-workbench/core';
 import { AuditApiError } from './audit';
 import type { RepositoryProvider } from './providers/repositoryProvider';
 import type { ReviewMergeRequest, ReviewDetails } from './types';
 import { conflictTargets, isConflictSource, validateConflictTarget, hasMergeConflicts, canCreateConflict, conflictResolutionHint } from './conflictRules';
+import { defaultBranchPolicy, renderBranchTemplate } from './branchPolicy';
 
 export interface ConflictPlan {
   source: BranchReference;
@@ -12,9 +13,16 @@ export interface ConflictPlan {
   originalMr?: { iid: number; webUrl: string };
 }
 
+function configuredConflictBranchName(source: string): string {
+  const template = vscode.workspace.getConfiguration('gitlabMr').get<string>('branchTemplates.conflict', defaultBranchPolicy.conflict);
+  const name = renderBranchTemplate(template, { source });
+  if (!name.startsWith('conflict/')) throw new Error('conflict 分支模板必须以 conflict/ 开头');
+  return name;
+}
+
 export function conflictGuide(plan: ConflictPlan): string {
   validateConflictTarget(plan.source.name, plan.target.name);
-  if (plan.branch !== conflictBranchName(plan.source.name)) throw new Error('conflict 分支名与原始源分支不一致');
+  if (plan.branch !== configuredConflictBranchName(plan.source.name)) throw new Error('conflict 分支名与当前公司模板或源分支不一致');
   // Names have been validated by the naming/target rules; no user text is interpolated as shell code.
   return `# conflict 处理指南
 ${plan.originalMr ? `\n原 MR：!${plan.originalMr.iid} — ${plan.originalMr.webUrl}\n` : ''}
@@ -116,7 +124,7 @@ export async function pickConflictPlan(service: RepositoryProvider, projectId: n
   })), { title: `选择 ${source.name} 原冲突 MR 的目标测试分支（从此创建基线）`, ignoreFocusOut: true });
   if (!choice) return undefined;
   validateConflictTarget(source.name, choice.ref.name);
-  return { source, target: choice.ref, branch: conflictBranchName(source.name) };
+  return { source, target: choice.ref, branch: configuredConflictBranchName(source.name) };
 }
 
 
@@ -128,7 +136,7 @@ export async function createConflictFromPlan(
   beforeCreate?: () => Promise<void>
 ): Promise<boolean> {
   validateConflictTarget(plan.source.name, plan.target.name);
-  if (plan.branch !== conflictBranchName(plan.source.name)) throw new Error('conflict 分支名与源分支不一致');
+  if (plan.branch !== configuredConflictBranchName(plan.source.name)) throw new Error('conflict 分支名与当前公司模板或源分支不一致');
   try {
     await service.getBranchCreationRef(project.id, 'branch', plan.branch);
     throw new Error('同名 conflict 分支已存在，可能正用于其他目标环境；请核对其 MR 和处理进度，不要覆盖或重复创建。');
@@ -183,7 +191,7 @@ export async function createConflictFromMergeRequest(
   requireActive();
   if (source.sha !== details.sha) throw new Error('源分支已更新，MR 版本尚未同步，请刷新后重试。');
   const plan: ConflictPlan = {
-    source, target, branch: conflictBranchName(source.name),
+    source, target, branch: configuredConflictBranchName(source.name),
     originalMr: { iid: details.iid, webUrl: details.web_url }
   };
   if (start) return start(service, plan, { id: project.id, label: project.path_with_namespace, webUrl: project.web_url }, details.reviewers.map(user => user.id));

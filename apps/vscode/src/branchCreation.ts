@@ -1,21 +1,23 @@
 import * as vscode from 'vscode';
-import { developmentBranchName, type DevelopmentBranchKind, type BaseKind, type BranchReference } from '@gitlab-workbench/core';
+import { type DevelopmentBranchKind, type BaseKind, type BranchReference } from '@gitlab-workbench/core';
 import { GitService } from './gitService';
 import { createRepositoryProvider } from './providers/factory';
 import { configuredConnection } from './providers/connection';
 import { AuditApiError } from './audit';
 import type { TokenManager } from './tokenManager';
 import { createConflictFromPlan, pickConflictPlan } from './conflictWorkflow';
+import type { WorkspaceRepository } from './repositoryContext';
+import { defaultBranchPolicy, renderBranchTemplate } from './branchPolicy';
 
-export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getToken' | 'promptForToken'>, selectedKind?: DevelopmentBranchKind, suggestedBase?: string): Promise<boolean> {
-  const folder = vscode.workspace.workspaceFolders?.[0];
+export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getToken' | 'promptForToken'>, selectedKind?: DevelopmentBranchKind, suggestedBase?: string, repository?: WorkspaceRepository): Promise<boolean> {
+  const folder = repository?.folder ?? vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage('请先打开 GitLab 项目工作区'); return false; }
   const kind = selectedKind ?? (await vscode.window.showQuickPick([
     { label: '新建 release', choice: 'release' as const }, { label: '新建 hotfix', choice: 'hotfix' as const }, { label: '新建 conflict', choice: 'conflict' as const }
   ], { title: '新建远程分支', ignoreFocusOut: true }))?.choice;
   if (!kind) return false;
   const git = new GitService(folder.uri.fsPath);
-  const repo = await git.getRepoInfo();
+  const repo = repository?.repo ?? await git.getRepoInfo();
   const connection = configuredConnection(repo, folder.uri);
   const token = await tokens.getToken(connection) || await tokens.promptForToken(connection);
   if (!token) return false;
@@ -51,7 +53,12 @@ export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getTo
   if (kind === 'hotfix' && issue === undefined) return false;
   const description = kind === 'hotfix' ? await vscode.window.showInputBox({ title: '英文短描述（可选，小写字母、数字和横线）', ignoreFocusOut: true }) : undefined;
   if (kind === 'hotfix' && description === undefined) return false;
-  const name = developmentBranchName({ kind, version, issue, description, baseKind, baseName: base.name });
+  const config = vscode.workspace.getConfiguration('gitlabMr', folder.uri);
+  const template = config.get<string>(kind === 'release' ? 'branchTemplates.release' : 'branchTemplates.hotfix', defaultBranchPolicy[kind]);
+  const name = renderBranchTemplate(template, {
+    version: version.trim(), issue: issue?.trim(), description: description?.trim(),
+    descriptionSuffix: description?.trim() ? `-${description.trim()}` : '', base: base.name
+  });
   try {
     await service.getBranchCreationRef(project.id, 'branch', name);
     throw new Error('同名分支已存在，请更换名称');

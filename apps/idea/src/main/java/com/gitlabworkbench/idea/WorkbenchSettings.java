@@ -18,6 +18,11 @@ public final class WorkbenchSettings implements PersistentStateComponent<Workben
     public static final class Data {
         public String instance = "https://gitlab.com";
         public String projectPath = "";
+        public boolean allowBranchDeletion = false;
+        public boolean commonBranchesOnly = true;
+        public String mainFilter = "全部";
+        public String releaseTemplate = "release/{version}";
+        public String hotfixTemplate = "hotfix/{version}/{issue}{descriptionSuffix}";
         public List<Conflict> conflicts = new ArrayList<>();
     }
     private final Data data = new Data();

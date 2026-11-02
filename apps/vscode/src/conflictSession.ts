@@ -14,6 +14,7 @@ export interface ConflictSession {
   id: string; connection: ProviderConnection; project: { id: number; label: string; webUrl: string };
   plan: ConflictPlan; reviewers: number[]; stage: Stage | LegacyStage; created: string;
   mr?: { iid: number; web_url: string }; pushedSha?: string; originalAlreadyClosed?: boolean;
+  linked?: boolean;
   root?: string; remote?: string; local?: string; isolated?: boolean;
 }
 const key = 'gitlabMr.conflictSessions.v1';
@@ -40,6 +41,29 @@ export class ConflictSessions {
     if (this.busy) throw new Error('冲突任务正在执行，请等待完成。');
     this.busy = true;
     try { return await action(); } finally { this.busy = false; }
+  }
+
+  /** Lightweight remote polling used only to enable the Continue action after a valid push. */
+  async readiness(): Promise<{ total: number; ready: number }> {
+    const tasks = this.all();
+    let ready = 0;
+    for (const session of tasks) {
+      const stage = this.normalize(session);
+      if (stage !== 'waitingPush') {
+        if (stage === 'mrCreating' || stage === 'replacementCreated' || stage === 'mr') ready++;
+        continue;
+      }
+      const token = await this.tokens.getToken(session.connection);
+      if (!token) continue;
+      try {
+        const service = new GitLabService(session.connection.instanceUrl, token);
+        const branch = await service.getBranchCreationRef(session.project.id, 'branch', session.plan.branch);
+        if (branch.sha === session.plan.target.sha) continue;
+        await service.getConflictResolution(session.project.id, session.plan.branch, session.plan.target.sha, session.plan.source.sha);
+        ready++;
+      } catch { /* A task remains waiting until the next quiet poll. */ }
+    }
+    return { total: tasks.length, ready };
   }
 
   async start(service: RepositoryProvider, plan: ConflictPlan, project: ConflictSession['project'], reviewers: number[]): Promise<boolean> {
@@ -195,6 +219,11 @@ export class ConflictSessions {
     }
 
     if (stage === 'replacementCreated') {
+      if (!s.linked && s.mr) {
+        await service.linkConflictMergeRequests(s.project.id, p.originalMr!.iid, p.originalMr!.webUrl, s.mr.iid, s.mr.web_url);
+        s.linked = true;
+        await this.save(s, 'replacementCreated');
+      }
       if (!s.originalAlreadyClosed) await service.closeConflictOriginal(s.project.id, p.originalMr!.iid, p.source.name, p.target.name, p.source.sha);
       await this.save(s, 'mr'); stage = 'mr';
     }
