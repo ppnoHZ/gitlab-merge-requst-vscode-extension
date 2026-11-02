@@ -409,6 +409,7 @@ release 检查结果中的 feature 分支支持工单链接：
 | `gitlabMr.issueLinks` | 内置 Jira、ITSM 规则 | 工单编号匹配与跳转地址 |
 | `gitlabMr.approvalRefreshSeconds` | `60` | 状态栏和新审批通知的轮询间隔，范围 30–600 秒 |
 | `gitlabMr.notifyNewApprovals` | `true` | 新的待审批 MR 到达时显示右下角通知 |
+| `gitlabMr.branchTemplates.feature` | `feature/{version}/{issue}` | Feature 分支模板；版本来自选定的 release 基线，可使用 `{version}`、`{issue}`、`{base}` |
 | `gitlabMr.branchTemplates.release` | `release/{version}` | Release 分支名称模板，可使用 `{version}`、`{base}` |
 | `gitlabMr.branchTemplates.hotfix` | `hotfix/{version}/{issue}{descriptionSuffix}` | Hotfix 分支名称模板，可使用版本、工单和描述变量 |
 | `gitlabMr.branchTemplates.conflict` | `conflict/{source}` | Conflict 分支名称模板，必须保留 `conflict/` 前缀 |
@@ -545,11 +546,11 @@ Remote SSH / WSL 在**远端扩展宿主**保存，而非本地 UI 主机。容�
 - 插件不自动 Push，也不提供自动 Force Push。确认远端没有他人新提交后，如确需更新个人分支，只能人工使用 `git push --force-with-lease`，不要使用 `--force`。
 - 交互列表和 `reword` Message 使用当前 Git 配置的编辑器。如果终端打开了不熟悉的编辑器，可先退出并配置，例如 `git config core.editor "code --wait"`，再重新操作。
 
-## 新建发布与冲突处理分支
+## 新建 Feature、发布与冲突处理分支
 
-命令面板搜索「新建 release 分支」「新建 hotfix 分支」或「新建 conflict 分支」，也可通过分支管理标题栏的新建按钮操作。
+命令面板搜索「新建 feature 分支」「新建 release 分支」「新建 hotfix 分支」或「新建 conflict 分支」，也可通过分支管理标题栏的新建按钮选择类型，或在远程分支行右键新建 feature 分支。
 
-选择基线类型（分支或 Tag，conflict 固定为目标分支），输入关键词搜索并选择具体基线。release 填版本号；hotfix 填版本、工单号和可选英文描述。conflict 填写原始 release/hotfix 分支的完整名称，不再单独填写版本或工单。核对完整 SHA 后点击「确认创建」。名称按 `gitlabMr.branchTemplates.*` 生成；新建时严格校验 Git ref 和模板变量，已有受管分支不符合当前模板时只显示警告，不自动改名或删除。
+Feature 按 `feature/<Jira fix version>/<Jira号>` 创建，例如 `feature/LI2500076/FOC-0007`；只能选择对应的 `release/<版本>` 远程分支作为基线，版本号自动从基线提取，再输入 Jira 工单号。release 填版本号；hotfix 填版本、工单号和可选英文描述。release/hotfix 可选择分支或 Tag；conflict 固定从目标分支创建，并填写原始 release/hotfix 分支的完整名称。核对完整 SHA 后点击「确认创建」。名称按 `gitlabMr.branchTemplates.*` 生成；新建时严格校验 Git ref 和模板变量，已有受管分支不符合当前模板时只显示警告，不自动改名或删除。
 
 处理冲突时，在准备合回的目标分支上右键选择「新建 conflict 分支」。创建的是目标分支的副本，不会自动执行 merge。随后将待合入代码合并到该副本、解决冲突并测试，最后从 conflict 分支向原目标分支发起 MR。
 

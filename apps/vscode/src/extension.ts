@@ -356,7 +356,7 @@ export async function activate(context: vscode.ExtensionContext) {
       releaseTreeView.title = releaseProvider.hasDisplayFilters ? `分支管理 · ${releaseProvider.filterTooltip}` : '分支管理';
     })
   );
-  for (const kind of [undefined, 'release', 'hotfix', 'conflict'] as const) {
+  for (const kind of [undefined, 'feature', 'release', 'hotfix', 'conflict'] as const) {
     const name = kind ? `gitlabMr.create${kind[0].toUpperCase()}${kind.slice(1)}Branch` : 'gitlabMr.createRemoteBranch';
     context.subscriptions.push(registerCommand(name, async (item?: ReleaseReadinessTreeItem) => {
       const repository = await repositoryContext.current();

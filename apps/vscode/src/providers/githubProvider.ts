@@ -139,7 +139,7 @@ export class GitHubProvider implements RepositoryProvider {
   }
   async createRemoteBranch(project: number, name: string, kind: BaseKind, base: string, expectedSha: string): Promise<{ ref: BranchReference; recovered: boolean }> {
     branchRefName(name); sha(expectedSha); positiveId(project);
-    if (!/^(release|hotfix|conflict)\//.test(name) || !['branch', 'tag'].includes(kind)) throw new Error('分支创建参数无效');
+    if (!/^(feature|release|hotfix|conflict)\//.test(name) || !['branch', 'tag'].includes(kind)) throw new Error('分支创建参数无效');
     const key = `${this.connection.apiUrl}:${project}:${name}`;
     if (GitHubProvider.creating.has(key)) throw new Error('此分支正在创建，请等待结果');
     GitHubProvider.creating.add(key);

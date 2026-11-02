@@ -2,7 +2,7 @@
   "name": "gitlab-auto-merge-request",
   "displayName": "GitLab Merge Request Tool",
   "description": "Automatically generates GitLab Merge Request title, description, and assigns reviewers based on branch rules.",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "zhoudd3",
   "repository": {
     "type": "git",
@@ -55,6 +55,7 @@
     "workspaceContains:.git",
     "onCommand:gitlabMr.mergePendingReview",
     "onCommand:gitlabMr.createRemoteBranch",
+    "onCommand:gitlabMr.createFeatureBranch",
     "onCommand:gitlabMr.createReleaseBranch",
     "onCommand:gitlabMr.createHotfixBranch",
     "onCommand:gitlabMr.createConflictBranch",
@@ -231,8 +232,9 @@
       },
       {
         "command": "gitlabMr.refreshReleaseReadiness",
-        "title": "Refresh Release Readiness (刷新上线检查)",
-        "category": "GitLab MR"
+        "title": "Refresh Release Readiness",
+        "category": "GitLab MR",
+        "icon": "$(refresh)"
       },
       {
         "command": "gitlabMr.filterReleaseBranches",
@@ -315,6 +317,12 @@
         "icon": "$(git-branch)"
       },
       {
+        "command": "gitlabMr.createFeatureBranch",
+        "title": "新建 feature 分支",
+        "category": "GitLab MR",
+        "icon": "$(git-branch)"
+      },
+      {
         "command": "gitlabMr.createReleaseBranch",
         "title": "新建 release 分支",
         "category": "GitLab MR",
@@ -373,7 +381,7 @@
           {
             "id": "manageBranches",
             "title": "浏览和创建规范分支",
-            "description": "[打开分支管理](command:gitlabMr.checkReleaseReadiness)，搜索远程分支并查看合并状态。这里也可以创建 `release`、`hotfix` 和 `conflict` 分支。",
+            "description": "[打开分支管理](command:gitlabMr.checkReleaseReadiness)，搜索远程分支并查看合并状态。这里也可以创建 `feature`、`release`、`hotfix` 和 `conflict` 分支。",
             "media": { "image": "media/getting-started.svg", "altText": "分支管理与创建流程" },
             "completionEvents": ["onCommand:gitlabMr.checkReleaseReadiness"]
           },
@@ -539,6 +547,11 @@
           "default": "release/{version}",
           "description": "Release 分支模板。可用变量：{version}、{base}。"
         },
+        "gitlabMr.branchTemplates.feature": {
+          "type": "string",
+          "default": "feature/{version}/{issue}",
+          "description": "Feature 分支模板。可用变量：{version}、{issue}、{base}。版本号取自所选 release 基线。"
+        },
         "gitlabMr.branchTemplates.hotfix": {
           "type": "string",
           "default": "hotfix/{version}/{issue}{descriptionSuffix}",
@@ -654,27 +667,27 @@
         {
           "command": "gitlabMr.startInteractiveRebase",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@0.8"
+          "group": "navigation@8"
         },
         {
           "command": "gitlabMr.selectRepository",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@0"
+          "group": "navigation@6"
         },
         {
           "command": "gitlabMr.diagnoseConnection",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@0.5"
+          "group": "navigation@7"
         },
         {
           "command": "gitlabMr.filterBranchStatus",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@3"
+          "group": "navigation@4"
         },
         {
           "command": "gitlabMr.clearBranchStatusFilters",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@4"
+          "group": "navigation@5"
         },
         {
           "command": "gitlabMr.filterReleaseOverview",
@@ -724,24 +737,24 @@
         {
           "command": "gitlabMr.filterReleaseBranches",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation"
+          "group": "navigation@3"
         },
         {
           "command": "gitlabMr.checkReleaseReadiness",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation",
+          "group": "navigation@0",
           "icon": "$(git-branch)"
         },
         {
           "command": "gitlabMr.refreshReleaseReadiness",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation",
+          "group": "navigation@1",
           "icon": "$(refresh)"
         },
         {
           "command": "gitlabMr.createRemoteBranch",
           "when": "view == gitlabMr.releaseReadiness",
-          "group": "navigation@0"
+          "group": "navigation@2"
         },
         {
           "command": "gitlabMr.continueConflict",
@@ -778,17 +791,17 @@
         {
           "command": "gitlabMr.copyBranchName",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/",
-          "group": "copy"
+          "group": "branch@2"
         },
         {
           "command": "gitlabMr.deleteBranch",
           "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
-          "group": "inline@3"
+          "group": "inline@9"
         },
         {
           "command": "gitlabMr.deleteBranch",
           "when": "view == gitlabMr.releaseReadiness && config.gitlabMr.allowBranchDeletion && viewItem =~ /-canDeleteBranch$/",
-          "group": "delete"
+          "group": "branch@9"
         },
         {
           "command": "gitlabMr.checkReleaseReadiness",
@@ -798,27 +811,27 @@
         {
           "command": "gitlabMr.checkReleaseReadiness",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
-          "group": "check"
+          "group": "branch@1"
         },
         {
           "command": "gitlabMr.createMainMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "gitlabMr.createMainMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/",
-          "group": "main"
+          "group": "branch@5"
         },
         {
           "command": "gitlabMr.createReleaseFeatureMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(not-created|closed)/",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "gitlabMr.openReleaseMergeRequest",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /releaseFeature-(open|merged|closed)/",
-          "group": "inline"
+          "group": "inline@3"
         },
         {
           "command": "gitlabMr.mergePendingReview",
@@ -833,7 +846,12 @@
         {
           "command": "gitlabMr.createConflictBranch",
           "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
-          "group": "branchCreation"
+          "group": "branch@4"
+        },
+        {
+          "command": "gitlabMr.createFeatureBranch",
+          "when": "view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/",
+          "group": "branch@3"
         },
         {
           "command": "gitlabMr.createConflictFromMergeRequest",

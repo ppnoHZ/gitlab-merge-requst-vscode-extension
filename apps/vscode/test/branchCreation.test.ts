@@ -54,6 +54,17 @@ async function run() {
     assert.equal(await handleCreateRemoteBranch(tokens, 'release'), true);
     assert.equal(remote.get('release/2.8.0'), mainSha); assert.equal(vscode.clipboard.text, 'release/2.8.0');
     assert(vscode.warnings.at(-1)?.includes(mainSha));
+    remote.set('release/LI2500076', tagSha);
+    picks = ['新建 feature', 'release/LI2500076']; inputs = ['release/', 'FOC-0007'];
+    assert.equal(await handleCreateRemoteBranch(tokens), true);
+    assert.equal(remote.get('feature/LI2500076/FOC-0007'), tagSha);
+    assert.equal(vscode.clipboard.text, 'feature/LI2500076/FOC-0007');
+    picks = ['新建 feature', 'release/LI2500076']; inputs = ['release/', 'invalid issue'];
+    await assert.rejects(handleCreateRemoteBranch(tokens), /Jira 格式工单号/);
+    assert.equal(remote.has('feature/LI2500076/invalid issue'), false);
+    picks = ['main']; inputs = ['release/', 'FOC-0008'];
+    assert.equal(await handleCreateRemoteBranch(tokens, 'feature'), false);
+    assert.equal(remote.has('feature/LI2500076/FOC-0008'), false);
     picks = ['Tag（hotfix 建议选择线上版本）', 'v1']; inputs = ['', '2.7.1', 'PROJ-1', 'fix-login'];
     assert.equal(await handleCreateRemoteBranch(tokens, 'hotfix'), true);
     assert.equal(remote.get('hotfix/2.7.1/PROJ-1-fix-login'), tagSha);
@@ -128,13 +139,15 @@ async function run() {
     assert.equal(developmentBranchName({ kind: 'conflict', version: '', conflictSource: 'release/LI2500076', baseKind: 'branch', baseName: 'dev' }), 'conflict/release/LI2500076');
     assert.throws(() => developmentBranchName({ kind: 'conflict', version: '', conflictSource: '../main', baseKind: 'branch', baseName: 'dev' }));
     const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
-    for (const suffix of ['Remote', 'Release', 'Hotfix', 'Conflict']) assert(manifest.contributes.commands.some((item: any) => item.command === `gitlabMr.create${suffix}Branch`));
+    for (const suffix of ['Remote', 'Feature', 'Release', 'Hotfix', 'Conflict']) assert(manifest.contributes.commands.some((item: any) => item.command === `gitlabMr.create${suffix}Branch`));
+    assert(manifest.activationEvents.includes('onCommand:gitlabMr.createFeatureBranch'));
     assert(manifest.contributes.menus['view/item/context'].some((item: any) => item.command === 'gitlabMr.createConflictBranch'));
+    assert(manifest.contributes.menus['view/item/context'].some((item: any) => item.command === 'gitlabMr.createFeatureBranch'));
   } finally {
     GitService.prototype.getRepoInfo = originalRepo;
     vscode.window.showQuickPick = pick; vscode.window.showInputBox = input; vscode.window.showInformationMessage = info;
     vscode.warningDialog.onShow = undefined;
   }
-  console.log('[PASS] VS Code branch creation: release/hotfix/conflict, tags, confirmation, cancellation, changed baseline, duplicate names and uncertain recovery');
+  console.log('[PASS] VS Code branch creation: feature/release/hotfix/conflict, release-based feature names, tags, confirmation, cancellation, changed baseline, duplicate names and uncertain recovery');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

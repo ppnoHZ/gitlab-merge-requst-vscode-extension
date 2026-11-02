@@ -1,6 +1,6 @@
-export interface BranchPolicyTemplates { release: string; hotfix: string; conflict: string }
+export interface BranchPolicyTemplates { feature: string; release: string; hotfix: string; conflict: string }
 export const defaultBranchPolicy: BranchPolicyTemplates = {
-  release: 'release/{version}', hotfix: 'hotfix/{version}/{issue}{descriptionSuffix}', conflict: 'conflict/{source}'
+  feature: 'feature/{version}/{issue}', release: 'release/{version}', hotfix: 'hotfix/{version}/{issue}{descriptionSuffix}', conflict: 'conflict/{source}'
 };
 
 const safeRef = /^(?!\/|.*(?:\.\.|\/\/|@\{|\\|\s|[~^:?*\[]))(?!.*(?:\.|\.lock)$)[A-Za-z0-9][A-Za-z0-9._\/-]{0,239}$/;
@@ -18,6 +18,6 @@ export function validateManagedBranch(name: string, templates: BranchPolicyTempl
   const pattern = (template: string) => new RegExp(`^${escaped(template).replace(/\\\{(?:version|issue|descriptionSuffix|source)\\\}/g, '.+?')}$`);
   const kind = (Object.keys(templates) as Array<keyof BranchPolicyTemplates>).find(key => pattern(templates[key]).test(name));
   if (kind) return { valid: true, kind };
-  if (/^(release|hotfix|conflict)\//.test(name)) return { valid: false, message: '分支名称不符合当前公司模板；插件仅提示，不会修改现有分支。' };
+  if (/^(feature|release|hotfix|conflict)\//.test(name)) return { valid: false, message: '分支名称不符合当前公司模板；插件仅提示，不会修改现有分支。' };
   return { valid: true };
 }

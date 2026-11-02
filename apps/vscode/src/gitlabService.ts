@@ -446,7 +446,7 @@ export class GitLabService implements RepositoryProvider {
 
   private static readonly creatingBranches = new Set<string>();
   async createRemoteBranch(projectId: number, name: string, kind: BaseKind, base: string, expectedSha: string): Promise<{ ref: BranchReference; recovered: boolean }> {
-    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !/^(release|hotfix|conflict)\/[A-Za-z0-9._/-]+$/.test(name) || name.includes('..') || name.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) || !['branch', 'tag'].includes(kind) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expectedSha)) throw new Error('分支创建参数无效');
+    if (!Number.isSafeInteger(projectId) || projectId <= 0 || !/^(feature|release|hotfix|conflict)\/[A-Za-z0-9._/-]+$/.test(name) || name.includes('..') || name.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')) || !['branch', 'tag'].includes(kind) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expectedSha)) throw new Error('分支创建参数无效');
     const key = `${this.baseUrl}:${projectId}:${name}`;
     if (GitLabService.creatingBranches.has(key)) throw new Error('此分支正在创建，请等待结果，不要重复提交');
     GitLabService.creatingBranches.add(key);

@@ -383,7 +383,7 @@ const copyMenus: Array<{ when: string; group: string }> =
   manifest.contributes.menus['view/item/context'].filter((item: { command: string }) =>
     item.command === 'gitlabMr.copyBranchName'
   );
-assert.deepEqual(copyMenus.map(item => item.group), ['inline@2', 'copy']);
+assert.deepEqual(copyMenus.map(item => item.group), ['inline@2', 'branch@2']);
 for (const menu of copyMenus) {
   assert.equal(menu.when, 'view == gitlabMr.releaseReadiness && viewItem =~ /^(remoteBranch|releaseFeature-)/');
 }
@@ -440,7 +440,7 @@ const checkMenus: Array<{ when: string; group: string }> =
   manifest.contributes.menus['view/item/context'].filter((item: { command: string }) =>
     item.command === 'gitlabMr.checkReleaseReadiness'
   );
-assert.deepEqual(checkMenus.map(item => item.group), ['inline@1', 'check']);
+assert.deepEqual(checkMenus.map(item => item.group), ['inline@1', 'branch@1']);
 for (const menu of checkMenus) {
   assert.equal(menu.when, 'view == gitlabMr.releaseReadiness && viewItem =~ /^remoteBranch/');
 }
@@ -451,10 +451,51 @@ const mainMenus: Array<{ when: string; group: string }> =
   manifest.contributes.menus['view/item/context'].filter((item: { command: string }) =>
     item.command === 'gitlabMr.createMainMergeRequest'
   );
-assert.deepEqual(mainMenus.map(item => item.group), ['inline', 'main']);
+assert.deepEqual(mainMenus.map(item => item.group), ['inline@3', 'branch@5']);
 for (const menu of mainMenus) {
   assert.equal(menu.when, 'view == gitlabMr.releaseReadiness && viewItem =~ /-canMergeToMain$/');
 }
+const branchTitleOrder = manifest.contributes.menus['view/title']
+  .filter((item: { command: string; when: string }) =>
+    item.when === 'view == gitlabMr.releaseReadiness' &&
+    ['checkReleaseReadiness', 'refreshReleaseReadiness', 'createRemoteBranch', 'filterReleaseBranches',
+      'filterBranchStatus', 'clearBranchStatusFilters', 'selectRepository', 'diagnoseConnection',
+      'startInteractiveRebase'].some(command => item.command === `gitlabMr.${command}`)
+  )
+  .sort((a: { group: string }, b: { group: string }) =>
+    Number(a.group.split('@')[1]) - Number(b.group.split('@')[1])
+  )
+  .map((item: { command: string }) => item.command);
+assert.deepEqual(branchTitleOrder, [
+  'gitlabMr.checkReleaseReadiness',
+  'gitlabMr.refreshReleaseReadiness',
+  'gitlabMr.createRemoteBranch',
+  'gitlabMr.filterReleaseBranches',
+  'gitlabMr.filterBranchStatus',
+  'gitlabMr.clearBranchStatusFilters',
+  'gitlabMr.selectRepository',
+  'gitlabMr.diagnoseConnection',
+  'gitlabMr.startInteractiveRebase'
+]);
+const branchContextOrder = manifest.contributes.menus['view/item/context']
+  .filter((item: { command: string; when: string; group: string }) =>
+    item.when.startsWith('view == gitlabMr.releaseReadiness') &&
+    ['checkReleaseReadiness', 'copyBranchName', 'createFeatureBranch', 'createConflictBranch', 'createMainMergeRequest',
+      'deleteBranch'].some(command => item.command === `gitlabMr.${command}`) &&
+    item.group.startsWith('branch@')
+  )
+  .sort((a: { group: string }, b: { group: string }) =>
+    Number(a.group.split('@')[1]) - Number(b.group.split('@')[1])
+  )
+  .map((item: { command: string }) => item.command);
+assert.deepEqual(branchContextOrder, [
+  'gitlabMr.checkReleaseReadiness',
+  'gitlabMr.copyBranchName',
+  'gitlabMr.createFeatureBranch',
+  'gitlabMr.createConflictBranch',
+  'gitlabMr.createMainMergeRequest',
+  'gitlabMr.deleteBranch'
+]);
 for (const state of ['open', 'merged', 'closed', 'not-created']) {
   const featureContext = `releaseFeature-${state}-canMergeToMain`;
   assert.match(featureContext, /-canMergeToMain$/);

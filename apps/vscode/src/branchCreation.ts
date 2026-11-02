@@ -9,11 +9,14 @@ import { createConflictFromPlan, pickConflictPlan } from './conflictWorkflow';
 import type { WorkspaceRepository } from './repositoryContext';
 import { defaultBranchPolicy, renderBranchTemplate } from './branchPolicy';
 
-export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getToken' | 'promptForToken'>, selectedKind?: DevelopmentBranchKind, suggestedBase?: string, repository?: WorkspaceRepository): Promise<boolean> {
+type BranchCreationKind = DevelopmentBranchKind | 'feature';
+
+export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getToken' | 'promptForToken'>, selectedKind?: BranchCreationKind, suggestedBase?: string, repository?: WorkspaceRepository): Promise<boolean> {
   const folder = repository?.folder ?? vscode.workspace.workspaceFolders?.[0];
   if (!folder) { vscode.window.showWarningMessage('请先打开 GitLab 项目工作区'); return false; }
   const kind = selectedKind ?? (await vscode.window.showQuickPick([
-    { label: '新建 release', choice: 'release' as const }, { label: '新建 hotfix', choice: 'hotfix' as const }, { label: '新建 conflict', choice: 'conflict' as const }
+    { label: '新建 feature', choice: 'feature' as const }, { label: '新建 release', choice: 'release' as const },
+    { label: '新建 hotfix', choice: 'hotfix' as const }, { label: '新建 conflict', choice: 'conflict' as const }
   ], { title: '新建远程分支', ignoreFocusOut: true }))?.choice;
   if (!kind) return false;
   const git = new GitService(folder.uri.fsPath);
@@ -29,34 +32,54 @@ export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getTo
     if (!plan) return false;
     return createConflictFromPlan(service, { id: project.id, label: repo.projectPath, webUrl: project.web_url }, plan);
   }
-  const baseKind: BaseKind | undefined = (await vscode.window.showQuickPick([
+  const baseKind: BaseKind | undefined = kind === 'feature' ? 'branch' : (await vscode.window.showQuickPick([
     { label: '分支', choice: 'branch' as const }, { label: 'Tag（hotfix 建议选择线上版本）', choice: 'tag' as const }
   ], { title: '选择基线类型', ignoreFocusOut: true }))?.choice;
   if (!baseKind) return false;
-  const search = await vscode.window.showInputBox({ title: '搜索基线（留空显示全部）', value: '', ignoreFocusOut: true });
+  const search = await vscode.window.showInputBox({
+    title: kind === 'feature' ? '搜索 release 基线（仅可从 release/<版本> 创建）' : '搜索基线（留空显示全部）',
+    value: kind === 'feature' ? (suggestedBase?.startsWith('release/') ? suggestedBase : 'release/') : '',
+    ignoreFocusOut: true
+  });
   if (search === undefined) return false;
   let page = 1; let base: BranchReference | undefined;
   while (!base) {
     const result = await service.getBranchCreationRefs(project.id, baseKind, page, search.trim());
+    const refs = kind === 'feature' ? result.items.filter(ref => /^release\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(ref.name)) : result.items;
     const preferred = project.default_branch;
-    if (page === 1 && baseKind === 'branch' && !search.trim() && preferred && !result.items.some(ref => ref.name === preferred)) result.items.unshift(await service.getBranchCreationRef(project.id, 'branch', preferred));
-    const choices = result.items.map(ref => ({ label: ref.name, description: `${ref.sha.slice(0, 8)}${ref.name === preferred ? ' · 推荐基线' : ''}`, ref, more: false }));
+    if (kind !== 'feature' && page === 1 && baseKind === 'branch' && !search.trim() && preferred && !refs.some(ref => ref.name === preferred)) refs.unshift(await service.getBranchCreationRef(project.id, 'branch', preferred));
+    const choices = refs.map(ref => ({ label: ref.name, description: `${ref.sha.slice(0, 8)}${ref.name === preferred ? ' · 推荐基线' : ''}`, ref, more: false }));
     choices.sort((a, b) => Number(b.ref.name === preferred) - Number(a.ref.name === preferred));
     const chosen = await vscode.window.showQuickPick([...choices, ...(result.hasMore ? [{ label: '加载下一页', description: '', ref: undefined, more: true }] : [])], { title: `选择基线（第 ${page} 页）`, ignoreFocusOut: true });
-    if (!chosen) return false;
+    if (!chosen) {
+      if (kind === 'feature' && refs.length === 0 && !result.hasMore) vscode.window.showInformationMessage('未找到可用的 release/<版本> 基线，请先创建或推送 release 分支。');
+      return false;
+    }
     if (chosen.more) { page++; continue; }
     base = chosen.ref;
   }
-  const version = await vscode.window.showInputBox({ title: '版本号', value: base.name.match(/^release\/([^/]+)/)?.[1], ignoreFocusOut: true });
+  const releaseVersion = kind === 'feature' ? base.name.match(/^release\/([^/]+)$/)?.[1] : undefined;
+  if (kind === 'feature' && !releaseVersion) throw new Error('Feature 分支必须从 release/<版本> 基线创建');
+  const version = kind === 'feature' ? releaseVersion : await vscode.window.showInputBox({
+    title: '版本号', value: base.name.match(/^release\/([^/]+)/)?.[1], ignoreFocusOut: true
+  });
   if (version === undefined) return false;
+  const featureIssue = kind === 'feature' ? await vscode.window.showInputBox({
+    title: 'Jira 工单号（例如 FOC-0007）', ignoreFocusOut: true,
+    validateInput: (value: string) => /^[A-Z][A-Z0-9]*-\d+$/.test(value.trim()) ? undefined : '请输入 Jira 格式工单号，例如 FOC-0007'
+  }) : undefined;
+  if (kind === 'feature') {
+    if (featureIssue === undefined) return false;
+    if (!/^[A-Z][A-Z0-9]*-\d+$/.test(featureIssue.trim())) throw new Error('请输入 Jira 格式工单号，例如 FOC-0007');
+  }
   const issue = kind === 'hotfix' ? await vscode.window.showInputBox({ title: '工单号（例如 PROJ-123）', ignoreFocusOut: true }) : undefined;
   if (kind === 'hotfix' && issue === undefined) return false;
   const description = kind === 'hotfix' ? await vscode.window.showInputBox({ title: '英文短描述（可选，小写字母、数字和横线）', ignoreFocusOut: true }) : undefined;
   if (kind === 'hotfix' && description === undefined) return false;
   const config = vscode.workspace.getConfiguration('gitlabMr', folder.uri);
-  const template = config.get<string>(kind === 'release' ? 'branchTemplates.release' : 'branchTemplates.hotfix', defaultBranchPolicy[kind]);
+  const template = config.get<string>(`branchTemplates.${kind}`, defaultBranchPolicy[kind]);
   const name = renderBranchTemplate(template, {
-    version: version.trim(), issue: issue?.trim(), description: description?.trim(),
+    version: version.trim(), issue: (featureIssue ?? issue)?.trim(), description: description?.trim(),
     descriptionSuffix: description?.trim() ? `-${description.trim()}` : '', base: base.name
   });
   try {
@@ -66,7 +89,9 @@ export async function handleCreateRemoteBranch(tokens: Pick<TokenManager, 'getTo
   const confirm = await vscode.window.showWarningMessage(`创建远程分支：${name}\n项目：${repo.projectPath}\n基线${baseKind === 'tag' ? ' Tag' : '分支'}：${base.name}\n提交 SHA：${base.sha}\n${base.title}\n${base.committedDate ?? ''}\n仅创建远程分支，不自动切换本地分支或执行合并。`, { modal: true }, '确认创建');
   if (confirm !== '确认创建') return false;
   const result = await service.createRemoteBranch(project.id, name, baseKind, base.name, base.sha);
-  const next = kind === 'hotfix' ? '下一步：修复后向主分支创建 MR，并同步维护中的 release。' : '可在上线总览查看此版本。';
+  const next = kind === 'feature'
+    ? '下一步：完成该工单后，向对应 release 分支创建 MR。'
+    : kind === 'hotfix' ? '下一步：修复后向主分支创建 MR，并同步维护中的 release。' : '可在上线总览查看此版本。';
   const action = await vscode.window.showInformationMessage(`${result.recovered ? '已核对远程分支与确认提交一致' : '创建成功'}：${name}\n${next}`, '打开分支', '复制名称');
   if (action === '复制名称') await vscode.env.clipboard.writeText(name);
   if (action === '打开分支') await vscode.env.openExternal(vscode.Uri.parse(`${project.web_url}/${service.kind === 'github' ? '' : '-/'}tree/${encodeURIComponent(name)}`));

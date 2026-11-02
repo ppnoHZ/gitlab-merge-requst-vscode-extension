@@ -436,6 +436,7 @@ export class ReleaseReadinessProvider implements vscode.TreeDataProvider<Release
         item.description = branchPath === this.selectedBranch ? '当前选择' : undefined;
         const config = vscode.workspace.getConfiguration('gitlabMr');
         const policy = {
+          feature: config.get<string>('branchTemplates.feature', defaultBranchPolicy.feature),
           release: config.get<string>('branchTemplates.release', defaultBranchPolicy.release),
           hotfix: config.get<string>('branchTemplates.hotfix', defaultBranchPolicy.hotfix),
           conflict: config.get<string>('branchTemplates.conflict', defaultBranchPolicy.conflict)
