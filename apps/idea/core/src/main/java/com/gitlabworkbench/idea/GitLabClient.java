@@ -11,7 +11,9 @@ import java.util.*;
 
 /** No local Git writes. HTTP redirects are refused so credentials stay on the configured instance. */
 public final class GitLabClient {
-    public record Ref(String name, String sha) {}
+    public record Ref(String name, String sha, String author, String committedDate, String title) {
+        public Ref(String name, String sha) { this(name, sha, "", "", ""); }
+    }
     public record Repo(long id, String path, String url, String defaultBranch) {}
     public record Mr(long id, long iid, long project, long sourceProject, long targetProject, String title, String source, String target, String sha, String state, String url, boolean conflict, String mergeStatus, List<Long> reviewers) {
         public String key() { return project + ":" + iid; }
@@ -258,7 +260,7 @@ public final class GitLabClient {
     public static void sameVersion(Mr expected, Mr actual) {
         if (expected.id != actual.id || expected.project != actual.project || !expected.source.equals(actual.source) || !expected.target.equals(actual.target) || !expected.sha.equals(actual.sha) || expected.sourceProject != actual.sourceProject || expected.targetProject != actual.targetProject) throw new IllegalStateException("MR 源/目标或提交已变化，请刷新后重试");
     }
-    static Ref ref(JsonObject object) { String sha = str(object.getAsJsonObject("commit"), "id"); requireSha(sha); return new Ref(str(object, "name"), sha); }
+    static Ref ref(JsonObject object) { String sha = str(object.getAsJsonObject("commit"), "id"); requireSha(sha); JsonObject commit = object.getAsJsonObject("commit"); return new Ref(str(object, "name"), sha, text(commit, "author_name"), text(commit, "committed_date"), text(commit, "title")); }
     static Mr mr(JsonObject object) {
         List<Long> reviewers = new ArrayList<>();
         if (object.has("reviewers")) for (JsonElement user : object.getAsJsonArray("reviewers")) reviewers.add(id(user.getAsJsonObject(), "id"));

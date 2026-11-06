@@ -64,6 +64,19 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             branchPanel.add(query, BorderLayout.NORTH);
             branchTree.setRootVisible(false);
             branchTree.setShowsRootHandles(true);
+            javax.swing.ToolTipManager.sharedInstance().registerComponent(branchTree);
+            branchTree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
+                @Override public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean focus) {
+                    super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
+                    Object data = ((javax.swing.tree.DefaultMutableTreeNode)value).getUserObject();
+                    if (data instanceof GitLabClient.Ref ref) {
+                        String state = mainStates.getOrDefault(ref.name(), "main 状态未知");
+                        setToolTipText(ref.name() + " · " + ref.sha() + " · " + ref.author() + " · " + ref.committedDate() + " · " + ref.title());
+                        setIcon("已合入 main".equals(state) ? com.intellij.icons.AllIcons.General.InspectionsOK : com.intellij.icons.AllIcons.Vcs.Branch);
+                    } else setToolTipText(null);
+                    return this;
+                }
+            });
             branchPanel.add(new JBScrollPane(branchTree), BorderLayout.CENTER);
             JPanel branchActions = new JPanel(new GridLayout(0, 2, 4, 4));
             commonOnly.setSelected(service.settings().getState().commonBranchesOnly);
@@ -310,7 +323,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                     parent = found;
                 }
                 parent.add(new javax.swing.tree.DefaultMutableTreeNode(ref) {
-                    @Override public String toString() { return parts[parts.length - 1] + " · " + ref.sha().substring(0, 8) + " · " + mainStates.getOrDefault(ref.name(), "main 状态未知"); }
+                    @Override public String toString() { return parts[parts.length - 1] + " · " + ref.sha().substring(0, 8) + (ref.author().isBlank() ? "" : " · " + ref.author()) + (ref.committedDate().isBlank() ? "" : " · " + ref.committedDate()) + " · " + mainStates.getOrDefault(ref.name(), "main 状态未知"); }
                 });
             }
             ((javax.swing.tree.DefaultTreeModel)branchTree.getModel()).reload();
