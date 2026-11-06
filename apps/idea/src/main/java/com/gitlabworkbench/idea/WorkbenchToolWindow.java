@@ -53,11 +53,9 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             super(new BorderLayout(0, 6)); this.project = project; service = project.getService(WorkbenchService.class);
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
             actions.add(button("连接设置", this::configure));
-            actions.add(button("刷新待办", () -> service.refresh(true)));
-            actions.add(button("新建 release", () -> createBranch("release")));
-            actions.add(button("新建 hotfix", () -> createBranch("hotfix")));
+
             add(actions, BorderLayout.NORTH);
-            JTabbedPane tabs = new JTabbedPane();
+            JPanel sections = new JPanel(); sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
             JPanel branchPanel = new JPanel(new BorderLayout(0, 4));
             JPanel query = new JPanel(new BorderLayout()); query.add(search, BorderLayout.CENTER); query.add(button("搜索 / 刷新", () -> loadBranches(false)), BorderLayout.EAST);
             search.setToolTipText("分支关键词；可用 ^ 表示前缀，例如 ^release/"); search.addActionListener(event -> loadBranches(false));
@@ -85,6 +83,11 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             stateFilter.setSelectedItem(service.settings().getState().mainFilter);
             stateFilter.addActionListener(event -> { service.settings().getState().mainFilter = (String)stateFilter.getSelectedItem(); rebuildBranchTree(); });
             branchActions.add(stateFilter);
+            branchActions.add(button("新建分支…", () -> {
+                String[] kinds = {"release", "hotfix"};
+                int choice = Messages.showChooseDialog(project, "选择分支类型", "新建远程分支", null, kinds, kinds[0]);
+                if (choice >= 0) createBranch(kinds[choice]);
+            }));
             branchActions.add(button("分支设置", this::branchSettings));
             branchActions.add(button("复制名称", () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
@@ -134,7 +137,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                     }
                 }
             });
-            tabs.addTab("分支管理", branchPanel);
+            sections.add(section("分支管理", branchPanel));
             JPanel todoPanel = new JPanel(new BorderLayout());
             todoList.setCellRenderer(new DefaultListCellRenderer() {
                 @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
@@ -151,10 +154,28 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             mrActions.add(button("创建 conflict", this::createConflict));
             mrActions.add(button("关闭原冲突 MR", this::closeOriginal));
             mrActions.add(button("替代 MR / 处理指引", this::replacement));
-            todoPanel.add(mrActions, BorderLayout.SOUTH); tabs.addTab("我的待办", todoPanel);
-            add(tabs, BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
+            todoPanel.add(mrActions, BorderLayout.SOUTH);
+            JPanel todoHeader = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            todoHeader.add(button("刷新", () -> service.refresh(true))); todoPanel.add(todoHeader, BorderLayout.NORTH);
+            sections.add(section("我的待办", todoPanel));
+            add(new JBScrollPane(sections), BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
             service.subscribe(this::render, this); render();
             if (!service.settings().getState().projectPath.isBlank()) loadBranches(false);
+        }
+        private JPanel section(String title, JPanel content) {
+            JPanel section = new JPanel(new BorderLayout(0, 4));
+            JToggleButton header = new JToggleButton("▾ " + title, true);
+            header.setHorizontalAlignment(SwingConstants.LEFT);
+            header.setToolTipText("展开或折叠“" + title + "”");
+            header.addActionListener(event -> {
+                content.setVisible(header.isSelected());
+                header.setText((header.isSelected() ? "▾ " : "▸ ") + title);
+                section.revalidate(); section.repaint();
+            });
+            content.setPreferredSize(new Dimension(320, 350));
+            section.add(header, BorderLayout.NORTH); section.add(content, BorderLayout.CENTER);
+            section.setAlignmentX(Component.LEFT_ALIGNMENT);
+            return section;
         }
         private void menuItem(JPopupMenu menu, String label, Runnable action) {
             JMenuItem item = new JMenuItem(label); item.setEnabled(!service.busy());
