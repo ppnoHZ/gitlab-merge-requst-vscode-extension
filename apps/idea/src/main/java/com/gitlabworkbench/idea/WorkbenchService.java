@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.util.function.Consumer;
@@ -33,6 +34,8 @@ public final class WorkbenchService implements Disposable {
     private final AtomicLong generation = new AtomicLong();
     private final CopyOnWriteArrayList<Runnable> listeners = new CopyOnWriteArrayList<>();
     private volatile boolean disposed;
+    private volatile boolean approvalBaselineEstablished;
+    private volatile Set<String> knownReviewKeys = Set.of();
     public volatile GitLabClient.Todos todos = new GitLabClient.Todos(List.of(), List.of());
     public volatile Integer approvals;
     public volatile String status = "请配置 GitLab 地址、项目路径和 Token", updated = "";
@@ -68,6 +71,7 @@ public final class WorkbenchService implements Disposable {
         WorkbenchSettings.Data data = settings().getState();
         synchronized (data) { data.instance = instance; data.projectPath = path; generation.incrementAndGet(); }
         todos = new GitLabClient.Todos(List.of(), List.of()); approvals = null; updated = ""; stale = true;
+        approvalBaselineEstablished = false; knownReviewKeys = Set.of();
         status = "配置已保存，正在加载 GitLab 数据…"; changed();
         refresh(false);
     }
@@ -85,6 +89,12 @@ public final class WorkbenchService implements Disposable {
             try {
                 if (expected != generation.get() || disposed || project.isDisposed()) return;
                 if (error == null) {
+                    Set<String> currentReviews = loaded.reviews().stream().map(GitLabClient.Mr::key).collect(java.util.stream.Collectors.toUnmodifiableSet());
+                    if (loaded.approvalsComplete() && approvalBaselineEstablished) {
+                        int added = (int) currentReviews.stream().filter(key -> !knownReviewKeys.contains(key)).count();
+                        if (added > 0) notifyNewApprovals(added);
+                    }
+                    if (loaded.approvalsComplete()) { knownReviewKeys = currentReviews; approvalBaselineEstablished = true; }
                     todos = loaded; approvals = loaded.approvalsComplete() ? loaded.reviews().size() : null; stale = false;
                     updated = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
                     status = "我提交 " + loaded.authored().size() + " · 待审批 " + (approvals == null ? "未确认（审批接口不可用）" : approvals) + " · 更新于 " + updated;
@@ -118,6 +128,11 @@ public final class WorkbenchService implements Disposable {
         ApplicationManager.getApplication().invokeLater(() -> {
             if (!project.isDisposed()) NotificationGroupManager.getInstance().getNotificationGroup("GitLab Workbench").createNotification(message, NotificationType.ERROR).notify(project);
         });
+    }
+    private void notifyNewApprovals(int count) {
+        NotificationGroupManager.getInstance().getNotificationGroup("GitLab Workbench")
+            .createNotification("新增 " + count + " 个需要你审批的 Merge Request，可在 GitLab Workbench 查看。", NotificationType.INFORMATION)
+            .notify(project);
     }
     @Override public void dispose() { disposed = true; generation.incrementAndGet(); poll.cancel(false); executor.shutdownNow(); listeners.clear(); }
 }

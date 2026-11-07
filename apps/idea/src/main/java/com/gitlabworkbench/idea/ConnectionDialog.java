@@ -7,6 +7,8 @@ import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.components.*;
 import com.intellij.util.concurrency.AppExecutorUtil;
+import com.intellij.util.ui.FormBuilder;
+import com.intellij.util.ui.JBUI;
 import git4idea.repo.GitRepositoryManager;
 import javax.swing.*;
 import java.awt.*;
@@ -17,7 +19,7 @@ import java.util.function.Consumer;
 final class ConnectionDialog extends DialogWrapper {
     private final Project project;
     private final WorkbenchService service;
-    private final JPanel panel = new JPanel(new GridLayout(0, 1, 0, 6));
+    private final JPanel panel = new JPanel(new BorderLayout());
     private final JTextField instance = new JBTextField(), path = new JBTextField();
     private final JPasswordField token = new JPasswordField();
     private final JButton test = new JButton("测试连接（不保存）");
@@ -42,14 +44,27 @@ final class ConnectionDialog extends DialogWrapper {
                 .forEach(remote -> remote.getUrls().forEach(url -> remotes.addItem(new Remote(repository.getRoot().getPresentableUrl(), remote.getName(), url))));
         }
         JPanel remoteRow = new JPanel(new BorderLayout(6, 0)); remoteRow.add(remotes, BorderLayout.CENTER); remoteRow.add(useRemote, BorderLayout.EAST);
-        panel.add(new JBLabel("当前项目的 Git remote（只读取配置，不执行 fetch 或修改 Git）")); panel.add(remoteRow);
-        panel.add(new JBLabel("GitLab 实例地址（例如 https://gitlab.company.com，支持部署子路径）")); panel.add(instance);
-        panel.add(new JBLabel("项目路径或项目首页 URL（例如 group/subgroup/project）")); panel.add(path);
-        panel.add(new JBLabel("Personal Access Token（api 权限；留空保留该实例已存凭据）")); panel.add(token);
-        panel.add(credentialStatus);
-        panel.add(test); panel.add(feedback);
-        panel.add(new JBLabel("网络设置：Settings → HTTP Proxy / Server Certificates"));
+        JPanel form = FormBuilder.createFormBuilder()
+            .addLabeledComponent("Git remote：", remoteRow)
+            .addTooltip("只读取当前项目配置，不执行 fetch，也不修改 Git remote。")
+            .addLabeledComponent("GitLab 地址：", instance)
+            .addTooltip("例如 https://gitlab.company.com，支持部署子路径。")
+            .addLabeledComponent("项目：", path)
+            .addTooltip("填写 group/subgroup/project 或项目首页 URL。")
+            .addLabeledComponent("Access Token：", token)
+            .addTooltip("需要 api 权限；留空会保留该实例已经保存的凭据。")
+            .addComponent(credentialStatus)
+            .addComponent(test)
+            .addComponent(feedback)
+            .addComponent(new JBLabel("网络设置：Settings → HTTP Proxy / Server Certificates"))
+            .addComponentFillVertically(new JPanel(), 0)
+            .getPanel();
+        panel.add(form, BorderLayout.CENTER);
+        panel.setBorder(JBUI.Borders.empty(8));
         panel.setPreferredSize(new Dimension(720, 420));
+        instance.getAccessibleContext().setAccessibleName("GitLab 实例地址");
+        path.getAccessibleContext().setAccessibleName("GitLab 项目路径");
+        token.getAccessibleContext().setAccessibleName("GitLab Personal Access Token");
         test.addActionListener(event -> testConnection());
         useRemote.addActionListener(event -> fillFromRemote());
         init();

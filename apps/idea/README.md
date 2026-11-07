@@ -10,7 +10,7 @@
 - Personal Access Token 需有 `api` 权限，存入 IDE PasswordSafe，按实例隔离。留空保留当前实例已有凭据，界面显示是否已保存而不回显 Token。IDE 的 Passwords 设置需选择持久化凭据存储；若设置为“不保存”，Token 无法跨重启保留。
 - 分支分页加载、关键词/前缀搜索，创建 release/hotfix；支持 branch 或 tag 基线，提交 SHA 二次校验。未知写入结果先核对远程状态，不自动重复提交。
 - 我的待办展示“我提交的”和“待我审批”的开放 MR。有确认冲突的 MR 使用红色图标；状态未知不标为已确认无冲突。
-- 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。审批接口返回 403/404/405 时仍展示已加载的 MR，指派给我的项目标为“审批状态未确认”，数量显示 `?`，不伪装为 0。
+- 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。首次成功加载建立基线，后续发现新增待审批 MR 时在 IDE 右下角通知。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。审批接口返回 403/404/405 时仍展示已加载的 MR，指派给我的项目标为“审批状态未确认”，数量显示 `?`，不伪装为 0。
 - 从同仓库 release/hotfix → dev/tst/uat/pre 的冲突 MR 创建 `conflict/<完整 Source>`。创建基线固定为 Target，保留任务关联；原 MR 的关闭是独立确认操作。
 - 通过 IDEA 自带 Git 工具人工解决、测试、提交和推送后，在“替代 MR / 处理指引”选择关联任务。替代 MR 固定原 Target、附原 MR 链接，继承原 Reviewer ID，可编辑标题、描述和 Reviewer。
 - 描述保留分支、工单、自检清单和生成说明。提交及文件列表使用两个确认 SHA 的 GitLab compare 实际差异；响应超时或已知截断时停止生成。确认后 SHA 变化则重新预览。
@@ -34,7 +34,7 @@ node scripts/idea.mjs buildPlugin
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.1.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.3.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
 仓库内 GitHub Actions 工作流 **IDEA plugin** 会构建和运行测试；成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
@@ -43,7 +43,7 @@ node scripts/idea.mjs buildPlugin
 
 `core` 子项目不依赖 IDEA SDK，可独立测试分支规范、分页、凭据发送、审批过滤、SHA 校验、未知创建结果核对、compare、MR 参数、HTTP 超时及拒绝重定向。与 VS Code 共用 `packages/contract-tests/branch-names.json`，确保规范一致。
 
-当前开发环境的 JetBrains SDK 下载被网络代理以 HTTP 403 拒绝；完整插件编译、打包和项目配置检查已改由 GitHub Actions 执行并通过，安装包位于成功运行的 Artifacts。当前未进行 IDE 沙箱交互及真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
+当前开发环境已验证 IDEA 2026.2.3 SDK 下载、完整插件编译和 `buildPlugin` 打包。GitHub Actions 同样执行构建和测试，安装包位于本地 `apps/idea/build/distributions` 或成功运行的 Artifacts。当前未进行真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
 
 插件使用 IDE 的默认代理选择器与 CertificateManager SSL 上下文，可通过 **Settings → HTTP Proxy / Server Certificates** 配置公司网络和受信任证书，不禁用 HTTPS 校验。连接不自动跟随重定向，避免将 Token 发往其他实例。错误信息区分 Token 无效、权限不足、项目不可见、SSO/重定向、代理认证、DNS、证书及超时，不回显 Token 或原始服务端响应。
 
@@ -69,3 +69,7 @@ node scripts/idea.mjs buildPlugin
 选中已合入的真实分支后显示“删除已合入分支”。main 和项目默认分支不显示删除按钮。确认后重新读取远端分支保护状态、分支 SHA 和 main SHA，再核对合入状态；受保护、保护字段缺失、SHA 变化或未合入时拒绝删除。仅删除远程分支，保留本地分支。网络失败时请先刷新或在 GitLab 核对结果，不要盲目重复删除。GitLab 删除 API 不支持 SHA 条件删除，最终核对到删除间仍有并发窗口，请避免同时推送。
 
 分支管理新增项目级持久化 main 状态筛选、默认关闭的删除开关、release/hotfix 命名模板和 MR 目标推荐。使用步骤与当前差异详见 [使用指南](USER_GUIDE.md)。
+
+## IntelliJ UI 规范
+
+工具窗口使用 IntelliJ Action System、平台 `Tree`/`JBList`、主题颜色和标准间距。无数据时显示明确空状态；动作根据后台忙碌状态和当前选择启用。MR 支持双击或 Enter 打开，主要输入控件具有可访问名称。连接设置使用标准标签表单，网络和 PasswordSafe 操作不阻塞 UI 线程。

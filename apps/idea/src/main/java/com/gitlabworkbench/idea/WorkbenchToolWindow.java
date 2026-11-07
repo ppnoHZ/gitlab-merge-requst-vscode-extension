@@ -1,20 +1,25 @@
 package com.gitlabworkbench.idea;
 
 import com.intellij.ide.BrowserUtil;
+import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.wm.*;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.components.*;
 import com.intellij.ui.content.ContentFactory;
+import com.intellij.ui.treeStructure.Tree;
+import com.intellij.util.ui.JBUI;
 import org.jetbrains.annotations.NotNull;
 import javax.swing.*;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 public final class WorkbenchToolWindow implements ToolWindowFactory {
@@ -36,14 +41,15 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private final DefaultListModel<GitLabClient.Ref> branches = new DefaultListModel<>();
         private final JLabel selectionHint = new JBLabel("选择分支后可右键操作；双击检查分支");
         private final DefaultListModel<Todo> todos = new DefaultListModel<>();
-        private final JList<Todo> todoList = new JBList<>(todos);
+        private final JBList<Todo> todoList = new JBList<>(todos);
         private final List<JButton> buttons = new ArrayList<>();
         private final JButton more;
         private final javax.swing.tree.DefaultMutableTreeNode branchRoot = new javax.swing.tree.DefaultMutableTreeNode("远程分支");
-        private final JTree branchTree = new JTree(branchRoot);
+        private final Tree branchTree = new Tree(branchRoot);
         private final Map<String, String> mainStates = new HashMap<>();
         private final JButton deleteBranchButton;
-        private final JCheckBox commonOnly = new JCheckBox("仅常用分支", true);
+        private final JBCheckBox commonOnly = new JBCheckBox("仅常用分支", true);
+        private final List<ActionToolbar> toolbars = new ArrayList<>();
         private GitLabClient.Todos displayed;
         private GitLabClient.Repo repo;
         private String loadedInstance = "", loadedPath = "", loadedSearch = "";
@@ -51,17 +57,19 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private boolean disposed, branchLoading;
         Panel(Project project) {
             super(new BorderLayout(0, 6)); this.project = project; service = project.getService(WorkbenchService.class);
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            actions.add(button("连接设置", this::configure));
-
-            add(actions, BorderLayout.NORTH);
+            setBorder(JBUI.Borders.empty(6));
+            add(toolbar("GitLabWorkbench.Main", action("连接设置", () -> true, this::configure),
+                action("刷新待办", () -> !service.busy(), () -> service.refresh(true))), BorderLayout.NORTH);
             JPanel sections = new JPanel(); sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
             JPanel branchPanel = new JPanel(new BorderLayout(0, 4));
             JPanel query = new JPanel(new BorderLayout()); query.add(search, BorderLayout.CENTER); query.add(button("搜索 / 刷新", () -> loadBranches(false)), BorderLayout.EAST);
             search.setToolTipText("分支关键词；可用 ^ 表示前缀，例如 ^release/"); search.addActionListener(event -> loadBranches(false));
+            search.getAccessibleContext().setAccessibleName("搜索远程分支");
             branchPanel.add(query, BorderLayout.NORTH);
             branchTree.setRootVisible(false);
             branchTree.setShowsRootHandles(true);
+            branchTree.getEmptyText().setText("尚未加载远程分支");
+            branchTree.getAccessibleContext().setAccessibleName("GitLab 远程分支");
             javax.swing.ToolTipManager.sharedInstance().registerComponent(branchTree);
             branchTree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
                 @Override public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean focus) {
@@ -76,35 +84,37 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                 }
             });
             branchPanel.add(new JBScrollPane(branchTree), BorderLayout.CENTER);
-            JPanel branchActions = new JPanel(new GridLayout(0, 2, 4, 4));
+            JPanel branchActions = new JPanel(new BorderLayout(6, 0));
             commonOnly.setSelected(service.settings().getState().commonBranchesOnly);
-            branchActions.add(commonOnly); commonOnly.addActionListener(event -> { service.settings().getState().commonBranchesOnly = commonOnly.isSelected(); rebuildBranchTree(); });
+            commonOnly.addActionListener(event -> { service.settings().getState().commonBranchesOnly = commonOnly.isSelected(); rebuildBranchTree(); });
             JComboBox<String> stateFilter = new JComboBox<>(new String[]{"全部", "已合入 main", "未合入 main", "main 状态未知"});
+            stateFilter.getAccessibleContext().setAccessibleName("main 合入状态筛选");
             stateFilter.setSelectedItem(service.settings().getState().mainFilter);
             stateFilter.addActionListener(event -> { service.settings().getState().mainFilter = (String)stateFilter.getSelectedItem(); rebuildBranchTree(); });
-            branchActions.add(stateFilter);
-            branchActions.add(button("新建分支…", () -> {
+            JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0)); filters.add(commonOnly); filters.add(stateFilter);
+            branchActions.add(filters, BorderLayout.WEST);
+            AnAction createBranch = action("新建分支…", () -> !service.busy(), () -> {
                 String[] kinds = {"release", "hotfix"};
                 int choice = Messages.showChooseDialog(project, "选择分支类型", "新建远程分支", null, kinds, kinds[0]);
                 if (choice >= 0) createBranch(kinds[choice]);
-            }));
-            branchActions.add(button("分支设置", this::branchSettings));
-            branchActions.add(button("复制名称", () -> {
+            });
+            branchActions.add(toolbar("GitLabWorkbench.Branches", createBranch,
+                action("分支设置", () -> !service.busy(), this::branchSettings),
+                action("检查", this::hasSelectedBranch, this::inspectBranch),
+                action("创建 MR", this::hasSelectedBranch, this::createBranchMr),
+                action("复制名称", this::hasSelectedBranch, () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
                 if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支，不能选择目录");
                 com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(new java.awt.datatransfer.StringSelection(ref.name()));
-            }));
-            branchActions.add(button("打开分支", () -> {
+            }), action("在 GitLab 打开", this::hasSelectedBranch, () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
                 if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支");
                 BrowserUtil.browse(loadedInstance + "/" + loadedPath + "/-/tree/" + java.net.URLEncoder.encode(ref.name(), java.nio.charset.StandardCharsets.UTF_8));
-            }));
+            })), BorderLayout.CENTER);
             query.add(branchActions, BorderLayout.SOUTH);
             JPanel branchFooter = new JPanel(new BorderLayout()); more = button("加载更多", () -> loadBranches(true)); branchFooter.add(more, BorderLayout.EAST); branchFooter.add(branchStatus, BorderLayout.CENTER); branchFooter.add(selectionHint, BorderLayout.SOUTH); more.setVisible(false); branchPanel.add(branchFooter, BorderLayout.SOUTH);
-            branchActions.add(button("检查分支 / release", this::inspectBranch));
-            branchActions.add(button("创建 MR", this::createBranchMr));
             deleteBranchButton = button("删除已合入分支", this::deleteMergedBranch);
-            deleteBranchButton.setVisible(false); branchActions.add(deleteBranchButton);
+            deleteBranchButton.setVisible(false); branchFooter.add(deleteBranchButton, BorderLayout.NORTH);
             branchTree.addTreeSelectionListener(event -> {
                 updateDeleteButton();
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
@@ -139,6 +149,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             });
             sections.add(section("分支管理", branchPanel));
             JPanel todoPanel = new JPanel(new BorderLayout());
+            todoList.getEmptyText().setText("暂无待审批或我提交的开放 MR");
+            todoList.getAccessibleContext().setAccessibleName("我的 GitLab Merge Request 待办");
             todoList.setCellRenderer(new DefaultListCellRenderer() {
                 @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
                     super.getListCellRendererComponent(list, value, index, selected, focus);
@@ -157,6 +169,15 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             todoPanel.add(mrActions, BorderLayout.SOUTH);
             JPanel todoHeader = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             todoHeader.add(button("刷新", () -> service.refresh(true))); todoPanel.add(todoHeader, BorderLayout.NORTH);
+            todoList.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event) && todoList.getSelectedValue() != null) BrowserUtil.browse(selected().url());
+                }
+            });
+            todoList.getInputMap().put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER, 0), "openMr");
+            todoList.getActionMap().put("openMr", new AbstractAction() {
+                @Override public void actionPerformed(java.awt.event.ActionEvent event) { if (todoList.getSelectedValue() != null) BrowserUtil.browse(selected().url()); }
+            });
             sections.add(section("我的待办", todoPanel));
             add(new JBScrollPane(sections), BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
             service.subscribe(this::render, this); render();
@@ -186,11 +207,31 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             JButton button = new JButton(label); buttons.add(button);
             button.addActionListener(event -> { try { action.run(); } catch (RuntimeException error) { service.notifyError(error); } }); return button;
         }
+        private AnAction action(String label, BooleanSupplier enabled, Runnable task) {
+            return new DumbAwareAction(label) {
+                @Override public @NotNull ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
+                @Override public void update(@NotNull AnActionEvent event) { event.getPresentation().setEnabled(enabled.getAsBoolean()); }
+                @Override public void actionPerformed(@NotNull AnActionEvent event) {
+                    try { task.run(); } catch (RuntimeException error) { service.notifyError(error); }
+                }
+            };
+        }
+        private JComponent toolbar(String place, AnAction... actions) {
+            DefaultActionGroup group = new DefaultActionGroup(actions);
+            ActionToolbar toolbar = ActionManager.getInstance().createActionToolbar(place, group, true);
+            toolbar.setTargetComponent(this); toolbars.add(toolbar); return toolbar.getComponent();
+        }
+        private boolean hasSelectedBranch() {
+            if (service.busy()) return false;
+            var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
+            return node != null && node.getUserObject() instanceof GitLabClient.Ref;
+        }
         private void render() {
             if (disposed) return;
             if (branchLoading && !service.busy()) { branchLoading = false; branchStatus.setText("加载未完成，保留已有分支；请重试"); }
             status.setText(service.status); status.setToolTipText(service.status);
             buttons.forEach(button -> button.setEnabled(!service.busy())); more.setEnabled(!service.busy() && next > 0); updateDeleteButton();
+            toolbars.forEach(ActionToolbar::updateActionsImmediately);
             WorkbenchSettings.Data config = service.settings().getState();
             if (!loadedInstance.isEmpty() && (!loadedInstance.equals(config.instance) || !loadedPath.equals(config.projectPath))) {
                 branches.clear(); rebuildBranchTree(); next = 0; repo = null; branchStatus.setText("连接已变更，请重新加载分支"); more.setEnabled(false);
