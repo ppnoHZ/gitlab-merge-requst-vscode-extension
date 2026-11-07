@@ -58,8 +58,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         Panel(Project project) {
             super(new BorderLayout(0, 6)); this.project = project; service = project.getService(WorkbenchService.class);
             setBorder(JBUI.Borders.empty(6));
-            add(toolbar("GitLabWorkbench.Main", action("连接设置", () -> true, this::configure),
-                action("刷新待办", () -> !service.busy(), () -> service.refresh(true))), BorderLayout.NORTH);
+            add(toolbar("GitLabWorkbench.Main", action("连接设置", com.intellij.icons.AllIcons.General.Settings, () -> true, this::configure),
+                action("刷新待办", com.intellij.icons.AllIcons.Actions.Refresh, () -> !service.busy(), () -> service.refresh(true))), BorderLayout.NORTH);
             JPanel sections = new JPanel(); sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
             JPanel branchPanel = new JPanel(new BorderLayout(0, 4));
             JPanel query = new JPanel(new BorderLayout()); query.add(search, BorderLayout.CENTER); query.add(button("搜索 / 刷新", () -> loadBranches(false)), BorderLayout.EAST);
@@ -93,20 +93,20 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             stateFilter.addActionListener(event -> { service.settings().getState().mainFilter = (String)stateFilter.getSelectedItem(); rebuildBranchTree(); });
             JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0)); filters.add(commonOnly); filters.add(stateFilter);
             branchActions.add(filters, BorderLayout.WEST);
-            AnAction createBranch = action("新建分支…", () -> !service.busy(), () -> {
+            AnAction createBranch = action("新建分支…", com.intellij.icons.AllIcons.General.Add, () -> !service.busy(), () -> {
                 String[] kinds = {"release", "hotfix"};
                 int choice = Messages.showChooseDialog(project, "选择分支类型", "新建远程分支", null, kinds, kinds[0]);
                 if (choice >= 0) createBranch(kinds[choice]);
             });
             branchActions.add(toolbar("GitLabWorkbench.Branches", createBranch,
-                action("分支设置", () -> !service.busy(), this::branchSettings),
-                action("检查", this::hasSelectedBranch, this::inspectBranch),
-                action("创建 MR", this::hasSelectedBranch, this::createBranchMr),
-                action("复制名称", this::hasSelectedBranch, () -> {
+                action("分支设置", com.intellij.icons.AllIcons.General.Settings, () -> !service.busy(), this::branchSettings),
+                action("检查", com.intellij.icons.AllIcons.Actions.Preview, this::hasSelectedBranch, this::inspectBranch),
+                action("创建 MR", com.intellij.icons.AllIcons.Vcs.Merge, this::hasSelectedBranch, this::createBranchMr),
+                action("复制名称", com.intellij.icons.AllIcons.Actions.Copy, this::hasSelectedBranch, () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
                 if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支，不能选择目录");
                 com.intellij.openapi.ide.CopyPasteManager.getInstance().setContents(new java.awt.datatransfer.StringSelection(ref.name()));
-            }), action("在 GitLab 打开", this::hasSelectedBranch, () -> {
+            }), action("在 GitLab 打开", com.intellij.icons.AllIcons.General.Web, this::hasSelectedBranch, () -> {
                 var node = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
                 if (node == null || !(node.getUserObject() instanceof GitLabClient.Ref ref)) throw new IllegalStateException("请选择分支");
                 BrowserUtil.browse(loadedInstance + "/" + loadedPath + "/-/tree/" + java.net.URLEncoder.encode(ref.name(), java.nio.charset.StandardCharsets.UTF_8));
@@ -207,8 +207,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             JButton button = new JButton(label); buttons.add(button);
             button.addActionListener(event -> { try { action.run(); } catch (RuntimeException error) { service.notifyError(error); } }); return button;
         }
-        private AnAction action(String label, BooleanSupplier enabled, Runnable task) {
-            return new DumbAwareAction(label) {
+        private AnAction action(String label, Icon icon, BooleanSupplier enabled, Runnable task) {
+            return new DumbAwareAction(label, label, icon) {
                 @Override public @NotNull ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
                 @Override public void update(@NotNull AnActionEvent event) { event.getPresentation().setEnabled(enabled.getAsBoolean()); }
                 @Override public void actionPerformed(@NotNull AnActionEvent event) {

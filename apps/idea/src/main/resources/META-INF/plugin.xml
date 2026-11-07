@@ -7,7 +7,7 @@
   <depends>com.intellij.modules.vcs</depends>
   <depends>Git4Idea</depends>
   <extensions defaultExtensionNs="com.intellij">
-    <toolWindow id="GitLab Workbench" anchor="right" factoryClass="com.gitlabworkbench.idea.WorkbenchToolWindow"/>
+    <toolWindow id="GitLab Workbench" anchor="right" icon="/icons/gitlabWorkbench.svg" factoryClass="com.gitlabworkbench.idea.WorkbenchToolWindow"/>
     <statusBarWidgetFactory id="GitLabWorkbench.Approvals" implementation="com.gitlabworkbench.idea.ApprovalWidgetFactory"/>
     <notificationGroup id="GitLab Workbench" displayType="BALLOON"/>
   </extensions>

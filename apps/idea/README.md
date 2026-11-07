@@ -37,7 +37,7 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.4.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.5.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
 仓库内 GitHub Actions 工作流 **IDEA plugin** 会从 JetBrains 官方发布接口解析最新稳定版，随后构建、运行测试并验证插件配置；每周一也会自动执行一次，尽早发现新版 API 不兼容。成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
@@ -76,3 +76,5 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 ## IntelliJ UI 规范
 
 工具窗口使用 IntelliJ Action System、平台 `Tree`/`JBList`、主题颜色和标准间距。无数据时显示明确空状态；动作根据后台忙碌状态和当前选择启用。MR 支持双击或 Enter 打开，主要输入控件具有可访问名称。连接设置使用标准标签表单，网络和 PasswordSafe 操作不阻塞 UI 线程。
+
+工具窗口在 IDEA 侧栏使用独立的浅色/深色 SVG 图标，插件管理页包含 `pluginIcon.svg` 与深色版本。Action Toolbar 复用 IDEA 内置图标，随主题和缩放自动适配。
