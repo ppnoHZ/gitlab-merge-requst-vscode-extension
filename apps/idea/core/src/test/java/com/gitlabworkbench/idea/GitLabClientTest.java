@@ -50,6 +50,7 @@ class GitLabClientTest {
         if (path.endsWith("/merge_base")) { send(exchange, 200, "{\"id\":\"" + (mode.equals("not-ancestor") ? OTHER : SHA) + "\"}"); return; }
         if (path.endsWith("/user")) { send(exchange, 200, "{\"id\":7}"); return; }
         if (path.endsWith("/projects/g/p")) { send(exchange, 200, "{\"id\":3,\"path_with_namespace\":\"g/p\",\"web_url\":\"https://gitlab.test/g/p\",\"default_branch\":\"main\"}"); return; }
+        if (path.contains("/repository/files/")) { send(exchange, 200, "{\"encoding\":\"base64\",\"content\":\"" + Base64.getEncoder().encodeToString("file content\n".getBytes(StandardCharsets.UTF_8)) + "\"}"); return; }
         if (path.endsWith("/branches")) {
             boolean second = query.contains("page=2"); exchange.getResponseHeaders().set("X-Next-Page", second ? "" : "2");
             send(exchange, 200, "[" + ref(second ? "release/2" : "release/1", SHA) + "]"); return;
@@ -99,6 +100,7 @@ class GitLabClientTest {
     @Test void reviewPinsShaBeforeApproveAndMerge() {
         mode = "review"; var mr = api.mr(3, 1); var snapshot = api.review(mr);
         assertEquals(SHA, snapshot.mr().sha()); assertEquals(OTHER, snapshot.targetSha()); assertEquals(List.of("M actual.txt"), snapshot.changes().files());
+        assertEquals("actual.txt", snapshot.files().getFirst().label()); assertEquals("file content\n", api.fileContent(3, "actual.txt", SHA));
         api.approve(mr, SHA); assertTrue(approved); assertEquals(SHA, body.get("sha").getAsString());
         var merged = api.merge(mr, SHA); assertEquals("merged", merged.state()); assertFalse(body.get("auto_merge").getAsBoolean());
         assertThrows(IllegalStateException.class, () -> api.approve(mr, OTHER));

@@ -10,7 +10,7 @@
 - Personal Access Token 需有 `api` 权限，存入 IDE PasswordSafe，按实例隔离。留空保留当前实例已有凭据，界面显示是否已保存而不回显 Token。IDE 的 Passwords 设置需选择持久化凭据存储；若设置为“不保存”，Token 无法跨重启保留。
 - 分支分页加载、关键词/前缀搜索，创建 feature/release/hotfix；feature 只能从对应 `release/<版本>` 创建并校验 Jira 工单号，支持可配置模板。release/hotfix 支持 branch 或 tag 基线，提交 SHA 二次校验。未知写入结果先核对远程状态，不自动重复提交。
 - 我的待办展示“我提交的”和“待我审批”的开放 MR。有确认冲突的 MR 使用红色图标；状态未知不标为已确认无冲突。
-- MR 可查看两个固定提交间的实际提交历史和变动文件。待审批 MR 只有在查看当前 SHA 后才能批准或立即合并；操作前重新核对 Reviewer、SHA、冲突及 GitLab mergeable 状态，代码变化后必须重新审阅。逐文件 IDE Diff 尚未接入，精细审阅可打开 GitLab。
+- MR 可查看两个固定提交间的实际提交历史和变动文件，并使用 IDEA 原生 Diff 查看所选文本文件的 Target/Source 内容。待审批 MR 只有在打开当前 SHA 的 Diff 后才能批准或立即合并；操作前重新核对 Reviewer、SHA、冲突及 GitLab mergeable 状态，代码变化后必须重新审阅。二进制或非 UTF-8 文件会引导到 GitLab。
 - 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。首次成功加载建立基线，后续发现新增待审批 MR 时在 IDE 右下角通知。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。审批接口返回 403/404/405 时仍展示已加载的 MR，指派给我的项目标为“审批状态未确认”，数量显示 `?`，不伪装为 0。
 - 从同仓库 release/hotfix → dev/tst/uat/pre 的冲突 MR 创建 `conflict/<完整 Source>`。创建基线固定为 Target，保留任务关联；原 MR 的关闭是独立确认操作。
 - 通过 IDEA 自带 Git 工具人工解决、测试、提交和推送后，在“替代 MR / 处理指引”选择关联任务。替代 MR 固定原 Target、附原 MR 链接，继承原 Reviewer ID，可编辑标题、描述和 Reviewer。
@@ -39,7 +39,7 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.6.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.7.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
 仓库内 GitHub Actions 工作流 **IDEA plugin** 会从 JetBrains 官方发布接口解析最新稳定版，随后构建、运行测试并验证插件配置；每周一也会自动执行一次，尽早发现新版 API 不兼容。成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
@@ -63,7 +63,7 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 
 分支管理按 VS Code 的 `/` 目录层级展示远程分支，默认折叠目录。顶部可搜索，默认仅展示常用分支（包括 conflict）；取消“仅常用分支”可查看全部已加载分支。选中真实分支后可复制完整名称、在 GitLab 打开分支，或将其作为新建 release/hotfix 的默认基线。目录不能执行复制或打开操作。分页失败保留已加载内容，可重试。
 
-IDEA 与 VS Code 的核心 GitLab 远程流程已对齐到 feature/release/hotfix 创建、分支状态、安全删除、MR 创建、待办审阅、批准/合并、上线总览及 conflict 替代 MR。VS Code 特有的多根工作区聚合、IDE 内逐文件虚拟 Diff、操作审计和终端 Interactive Rebase 尚未移植；这些能力涉及 IDEA 工程模型、编辑器 Diff API 和独立审计存储，不能用不完整占位替代。
+IDEA 与 VS Code 的核心 GitLab 远程流程已对齐到 feature/release/hotfix 创建、分支状态、安全删除、MR 创建、原生 Diff、待办审阅、批准/合并、上线总览及 conflict 替代 MR。VS Code 特有的多根工作区聚合、操作审计和终端 Interactive Rebase 尚未移植；这些能力涉及 IDEA 工程模型、独立审计存储和本地 Git 状态，不能用不完整占位替代。
 
 分支列表现在自动读取全部分页，所有页面成功后替换快照，失败保留旧数据。“检查分支 / release”完整读取目标 MR，release 额外汇总同版本 feature 与 MR 状态。“创建 MR”预览实际 SHA 差异并在提交前重新校验双分支 SHA，重名开放 MR 会阻止创建。
 

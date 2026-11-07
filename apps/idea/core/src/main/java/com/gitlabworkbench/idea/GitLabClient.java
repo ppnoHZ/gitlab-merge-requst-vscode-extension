@@ -6,6 +6,8 @@ import java.net.ProxySelector;
 import java.net.URLEncoder;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.time.Duration;
 import java.util.*;
 
@@ -28,7 +30,10 @@ public final class GitLabClient {
         public Todos(List<Mr> authored, List<Mr> reviews) { this(authored, reviews, true); }
     }
     public record Comparison(List<String> commits, List<String> files) {}
-    public record ReviewSnapshot(Mr mr, String targetSha, Comparison changes) {}
+    public record ChangedFile(String oldPath, String newPath, boolean newFile, boolean deletedFile, boolean renamedFile) {
+        public String label() { return renamedFile ? oldPath + " → " + newPath : deletedFile ? oldPath : newPath; }
+    }
+    public record ReviewSnapshot(Mr mr, String targetSha, Comparison changes, List<ChangedFile> files) {}
     public static final class ApiException extends RuntimeException {
         public final int status;
         ApiException(String message, int status) { super(message); this.status = status; }
@@ -174,11 +179,14 @@ public final class GitLabClient {
         request("DELETE", "/projects/" + project + "/repository/branches/" + enc(name), null);
     }
     public List<Ref> allBranches(long project, String search) {
+        return allRefs(project, "branch", search);
+    }
+    public List<Ref> allRefs(long project, String kind, String search) {
         List<Ref> result = new ArrayList<>();
         for (int number = 1; number != 0;) {
-            Page<Ref> loaded = refs(project, "branch", number, search);
+            Page<Ref> loaded = refs(project, kind, number, search);
             result.addAll(loaded.items()); number = loaded.next();
-            if (result.size() > 100000) throw new IllegalStateException("分支过多，请缩小搜索范围");
+            if (result.size() > 100000) throw new IllegalStateException("基线过多，请缩小搜索范围");
         }
         return List.copyOf(result);
     }
@@ -199,9 +207,29 @@ public final class GitLabClient {
         Mr current = mr(get("/projects/" + expected.project + "/merge_requests/" + expected.iid + "?with_merge_status_recheck=true"));
         sameVersion(expected, current);
         if (!current.state.equals("opened")) throw new IllegalStateException("MR 已关闭或合并，请刷新待办");
+        if (current.sourceProject != current.targetProject) throw new IllegalStateException("跨仓库 MR 请在 GitLab 中审阅");
         Ref source = ref(current.project, "branch", current.source), target = ref(current.project, "branch", current.target);
         if (!source.sha.equals(current.sha)) throw new IllegalStateException("MR Source 与远程分支提交尚未同步，请刷新后重试");
-        return new ReviewSnapshot(current, target.sha, compare(current.project, source.sha, target.sha));
+        JsonObject value = comparison(current.project, source.sha, target.sha);
+        List<ChangedFile> changed = new ArrayList<>();
+        for (JsonElement element : value.getAsJsonArray("diffs")) {
+            JsonObject diff = element.getAsJsonObject();
+            changed.add(new ChangedFile(str(diff, "old_path"), str(diff, "new_path"), bool(diff, "new_file"), bool(diff, "deleted_file"), bool(diff, "renamed_file")));
+        }
+        return new ReviewSnapshot(current, target.sha, parseComparison(value), List.copyOf(changed));
+    }
+    public String fileContent(long project, String path, String sha) {
+        requireSha(sha);
+        JsonObject file = get("/projects/" + project + "/repository/files/" + enc(path) + "?ref=" + enc(sha));
+        if (!text(file, "encoding").equals("base64")) throw new IllegalStateException("GitLab 文件内容不是 Base64 编码");
+        String encoded = str(file, "content").replaceAll("\\s", "");
+        byte[] bytes;
+        try { bytes = Base64.getDecoder().decode(encoded); }
+        catch (IllegalArgumentException error) { throw new IllegalStateException("GitLab 文件内容 Base64 无效"); }
+        if (Arrays.equals(bytes, new byte[0])) return "";
+        for (byte value : bytes) if (value == 0) throw new IllegalStateException("二进制文件请在 GitLab 中查看");
+        try { return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString(); }
+        catch (java.nio.charset.CharacterCodingException error) { throw new IllegalStateException("非 UTF-8 文件请在 GitLab 中查看"); }
     }
     public Mr approve(Mr expected, String reviewedSha) {
         requireSha(reviewedSha);
@@ -267,14 +295,20 @@ public final class GitLabClient {
             .filter(item -> item.source.equals(source) && item.target.equals(target) && item.sourceProject == project && item.targetProject == project).toList();
     }
     public Comparison compare(long project, String sourceSha, String targetSha) {
+        return parseComparison(comparison(project, sourceSha, targetSha));
+    }
+    private JsonObject comparison(long project, String sourceSha, String targetSha) {
         requireSha(sourceSha); requireSha(targetSha);
         JsonObject value = get("/projects/" + project + "/repository/compare?from=" + enc(targetSha) + "&to=" + enc(sourceSha) + "&straight=false");
         if (bool(value, "compare_timeout") || !value.has("commits") || !value.has("diffs")) throw new IllegalStateException("提交差异未完整返回，请在 GitLab 核对后再创建 MR");
+        for (JsonElement element : value.getAsJsonArray("diffs")) { JsonObject diff = element.getAsJsonObject(); if (bool(diff, "too_large") || bool(diff, "collapsed")) throw new IllegalStateException("GitLab 差异被截断，请在浏览器核对"); }
+        return value;
+    }
+    private Comparison parseComparison(JsonObject value) {
         List<String> commits = new ArrayList<>(), files = new ArrayList<>();
         for (JsonElement element : value.getAsJsonArray("commits")) { JsonObject commit = element.getAsJsonObject(); commits.add(str(commit, "short_id") + " " + str(commit, "title")); }
         for (JsonElement element : value.getAsJsonArray("diffs")) {
             JsonObject diff = element.getAsJsonObject();
-            if (bool(diff, "too_large") || bool(diff, "collapsed")) throw new IllegalStateException("GitLab 差异被截断，请在浏览器核对");
             files.add((bool(diff, "new_file") ? "A " : bool(diff, "deleted_file") ? "D " : bool(diff, "renamed_file") ? "R " + str(diff, "old_path") + " → " : "M ") + str(diff, "new_path"));
         }
         return new Comparison(List.copyOf(commits), List.copyOf(files));

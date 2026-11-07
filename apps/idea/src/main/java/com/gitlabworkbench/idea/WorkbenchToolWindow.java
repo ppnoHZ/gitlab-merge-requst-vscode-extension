@@ -1,6 +1,9 @@
 package com.gitlabworkbench.idea;
 
 import com.intellij.ide.BrowserUtil;
+import com.intellij.diff.DiffManager;
+import com.intellij.diff.DiffContentFactory;
+import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.project.Project;
@@ -30,6 +33,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
     }
     private record Todo(String category, GitLabClient.Mr mr) { @Override public String toString() { return category + " · !" + mr.iid() + " " + mr.title() + (mr.conflict() ? " · 有冲突" : "") + " · " + mr.source() + " → " + mr.target(); } }
     private record Prepared(WorkbenchService.Connection connection, GitLabClient.Repo repo, GitLabClient.Ref base, String name, String kind) {}
+    private record BranchBases(WorkbenchService.Connection connection, GitLabClient.Repo repo, List<GitLabClient.Ref> branches, List<GitLabClient.Ref> tags) {}
     private record ConflictPreview(WorkbenchService.Connection connection, GitLabClient.Mr original, GitLabClient.Ref target) {}
     private record Replacement(WorkbenchService.Connection connection, WorkbenchSettings.Conflict task, GitLabClient.Mr original, GitLabClient.Ref source, GitLabClient.Ref target, String description, GitLabClient.Mr existing) {}
     private static final class Panel extends JPanel implements Disposable {
@@ -42,6 +46,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private final JLabel selectionHint = new JBLabel("选择分支后可右键操作；双击检查分支");
         private final DefaultListModel<Todo> todos = new DefaultListModel<>();
         private final JBList<Todo> todoList = new JBList<>(todos);
+        private final DefaultListModel<String> conflictTaskItems = new DefaultListModel<>();
+        private final JBList<String> conflictTaskList = new JBList<>(conflictTaskItems);
         private final List<JButton> buttons = new ArrayList<>();
         private final JButton more;
         private final javax.swing.tree.DefaultMutableTreeNode branchRoot = new javax.swing.tree.DefaultMutableTreeNode("远程分支");
@@ -49,6 +55,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private final Map<String, String> mainStates = new HashMap<>();
         private final Map<String, String> reviewedShas = new HashMap<>();
         private final JButton deleteBranchButton;
+        private JButton openMrButton, reviewButton, approveButton, mergeButton, createConflictButton, closeOriginalButton, replacementButton;
         private final JBCheckBox commonOnly = new JBCheckBox("仅常用分支", true);
         private final List<ActionToolbar> toolbars = new ArrayList<>();
         private GitLabClient.Todos displayed;
@@ -164,13 +171,13 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             });
             todoPanel.add(new JBScrollPane(todoList), BorderLayout.CENTER);
             JPanel mrActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            mrActions.add(button("打开 MR", () -> BrowserUtil.browse(selected().url())));
-            mrActions.add(button("查看变更", this::showReviewChanges));
-            mrActions.add(button("批准", this::approveReview));
-            mrActions.add(button("合并", this::mergeReview));
-            mrActions.add(button("创建 conflict", this::createConflict));
-            mrActions.add(button("关闭原冲突 MR", this::closeOriginal));
-            mrActions.add(button("替代 MR / 处理指引", this::replacement));
+            mrActions.add(openMrButton = button("打开 MR", () -> BrowserUtil.browse(selected().url())));
+            mrActions.add(reviewButton = button("查看变更", this::showReviewChanges));
+            mrActions.add(approveButton = button("批准", this::approveReview));
+            mrActions.add(mergeButton = button("合并", this::mergeReview));
+            mrActions.add(createConflictButton = button("创建 conflict", this::createConflict));
+            mrActions.add(closeOriginalButton = button("关闭原冲突 MR", this::closeOriginal));
+            mrActions.add(replacementButton = button("替代 MR / 处理指引", this::replacement));
             todoPanel.add(mrActions, BorderLayout.SOUTH);
             JPanel todoHeader = new JPanel(new FlowLayout(FlowLayout.RIGHT));
             todoHeader.add(button("刷新", () -> service.refresh(true))); todoPanel.add(todoHeader, BorderLayout.NORTH);
@@ -183,7 +190,14 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             todoList.getActionMap().put("openMr", new AbstractAction() {
                 @Override public void actionPerformed(java.awt.event.ActionEvent event) { if (todoList.getSelectedValue() != null) BrowserUtil.browse(selected().url()); }
             });
+            todoList.addListSelectionListener(event -> { if (!event.getValueIsAdjusting()) updateTodoActions(); });
             sections.add(section("我的待办", todoPanel));
+            JPanel conflictPanel = new JPanel(new BorderLayout(0, 4));
+            conflictTaskList.getEmptyText().setText("暂无进行中的 conflict 任务");
+            conflictTaskList.getAccessibleContext().setAccessibleName("Conflict 处理任务");
+            conflictPanel.add(new JBScrollPane(conflictTaskList), BorderLayout.CENTER);
+            conflictPanel.add(button("继续处理选中的 Conflict 任务", this::replacement), BorderLayout.SOUTH);
+            sections.add(section("Conflict 任务", conflictPanel));
             add(new JBScrollPane(sections), BorderLayout.CENTER); add(status, BorderLayout.SOUTH);
             service.subscribe(this::render, this); render();
             if (!service.settings().getState().projectPath.isBlank()) loadBranches(false);
@@ -237,6 +251,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             status.setText(service.status); status.setToolTipText(service.status);
             buttons.forEach(button -> button.setEnabled(!service.busy())); more.setEnabled(!service.busy() && next > 0); updateDeleteButton();
             toolbars.forEach(ActionToolbar::updateActionsImmediately);
+            updateTodoActions(); updateConflictTasks();
             WorkbenchSettings.Data config = service.settings().getState();
             if (!loadedInstance.isEmpty() && (!loadedInstance.equals(config.instance) || !loadedPath.equals(config.projectPath))) {
                 branches.clear(); rebuildBranchTree(); next = 0; repo = null; branchStatus.setText("连接已变更，请重新加载分支"); more.setEnabled(false);
@@ -248,6 +263,25 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                 displayed.authored().forEach(mr -> todos.addElement(new Todo("我提交的", mr)));
                 if (selection != null) for (int i = 0; i < todos.size(); i++) if (todos.get(i).mr.key().equals(selection.mr.key()) && todos.get(i).category.equals(selection.category)) todoList.setSelectedIndex(i);
             }
+        }
+        private void updateTodoActions() {
+            if (openMrButton == null) return;
+            Todo todo = todoList.getSelectedValue(); boolean selected = todo != null && !service.busy();
+            boolean review = selected && displayed != null && displayed.reviews().stream().anyMatch(mr -> mr.key().equals(todo.mr.key()));
+            boolean conflict = selected && todo.mr.conflict();
+            openMrButton.setVisible(selected); reviewButton.setVisible(selected);
+            approveButton.setVisible(review); mergeButton.setVisible(review);
+            createConflictButton.setVisible(conflict); closeOriginalButton.setVisible(conflict);
+            replacementButton.setVisible(!tasks().isEmpty());
+        }
+        private void updateConflictTasks() {
+            if (conflictTaskList == null) return;
+            String selected = conflictTaskList.getSelectedValue(); conflictTaskItems.clear();
+            for (WorkbenchSettings.Conflict task : tasks().stream().filter(item -> item.instance.equals(service.settings().getState().instance)).toList()) {
+                String step = switch (task.stage) { case "planned" -> "等待创建远程分支"; case "created" -> "等待解决并推送"; case "mrCreating" -> "MR 创建结果待核对"; case "mr" -> "等待替代 MR 合并"; case "merged" -> "可归档"; default -> task.stage; };
+                conflictTaskItems.addElement(task.branch + " → " + task.target + " · 原 !" + task.originalIid + " · " + step);
+            }
+            if (selected != null) for (int i = 0; i < conflictTaskItems.size(); i++) if (conflictTaskItems.get(i).equals(selected)) conflictTaskList.setSelectedIndex(i);
         }
         private <T> void run(Callable<T> action, Consumer<T> success) { service.run(action, value -> { if (!disposed) { try { success.accept(value); } catch (RuntimeException error) { service.notifyError(error); } } }); }
         private boolean confirm(String message, String title) { return Messages.showYesNoDialog(project, message, title, "确认", "取消", Messages.getQuestionIcon()) == Messages.YES; }
@@ -261,13 +295,26 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private void showReviewChanges() {
             GitLabClient.Mr selected = selectedFresh();
             run(() -> service.connection().api().review(selected), snapshot -> {
-                String text = "MR !" + snapshot.mr().iid() + " · " + snapshot.mr().source() + " → " + snapshot.mr().target()
-                    + "\n审阅提交：" + snapshot.mr().sha() + "\n目标提交：" + snapshot.targetSha()
-                    + "\n\n提交历史（实际差异）\n" + String.join("\n", snapshot.changes().commits())
-                    + "\n\n变动文件（实际差异）\n" + String.join("\n", snapshot.changes().files())
-                    + "\n\n批准或合并前请核对所有变更；需要逐行 Diff 时请打开 GitLab。";
-                TextDialog dialog = new TextDialog(project, "Review Changes", "MR !" + snapshot.mr().iid(), text, false);
-                if (dialog.showAndGet()) reviewedShas.put(snapshot.mr().key(), snapshot.mr().sha());
+                if (snapshot.files().isEmpty()) throw new IllegalStateException("MR 没有可审阅的文件差异");
+                String[] labels = snapshot.files().stream().map(GitLabClient.ChangedFile::label).toArray(String[]::new);
+                int selectedFile = Messages.showChooseDialog(project,
+                    "审阅提交 " + snapshot.mr().sha().substring(0, 8) + "，选择文件后将在 IDEA Diff 中打开。\n全部文件：\n" + String.join("\n", snapshot.changes().files()),
+                    "Review Changes · !" + snapshot.mr().iid(), null, labels, labels[0]);
+                if (selectedFile < 0) return;
+                GitLabClient.ChangedFile file = snapshot.files().get(selectedFile);
+                run(() -> {
+                    var api = service.connection().api();
+                    String left = file.newFile() ? "" : api.fileContent(snapshot.mr().project(), file.oldPath(), snapshot.targetSha());
+                    String right = file.deletedFile() ? "" : api.fileContent(snapshot.mr().project(), file.newPath(), snapshot.mr().sha());
+                    return new String[]{left, right};
+                }, contents -> {
+                    var factory = DiffContentFactory.getInstance();
+                    DiffManager.getInstance().showDiff(project, new SimpleDiffRequest(
+                        "!" + snapshot.mr().iid() + " " + file.label() + " · " + snapshot.mr().sha().substring(0, 8),
+                        factory.create(project, contents[0]), factory.create(project, contents[1]),
+                        snapshot.mr().target() + " · " + snapshot.targetSha().substring(0, 8), snapshot.mr().source() + " · " + snapshot.mr().sha().substring(0, 8)));
+                    reviewedShas.put(snapshot.mr().key(), snapshot.mr().sha());
+                });
             });
         }
         private void approveReview() {
@@ -478,21 +525,17 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             var selectedNode = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
             String defaultBase = selectedNode != null && selectedNode.getUserObject() instanceof GitLabClient.Ref ref ? ref.name() : repo == null ? "main" : repo.defaultBranch();
             if (kind.equals("feature") && !defaultBase.startsWith("release/")) defaultBase = "release/";
-            Fields dialog = new Fields(project, "新建 " + kind, new String[]{"基线类型（branch / tag）", "基线名称（hotfix 建议使用线上 Tag）", "版本号", "工单号（hotfix 必填）", "英文短描述（可选）"}, new String[]{"branch", defaultBase, "", "", ""}, -1);
-            if (!dialog.showAndGet()) return;
-            String baseKind = dialog.value(0).trim(), baseName = dialog.value(1).trim();
-            if (!Set.of("branch", "tag").contains(baseKind)) throw new IllegalArgumentException("基线类型必须是 branch 或 tag");
-            if (kind.equals("feature") && (!baseKind.equals("branch") || !baseName.matches("release/[A-Za-z0-9][A-Za-z0-9._-]*"))) throw new IllegalArgumentException("Feature 只能从 release/<版本> 分支创建");
-            String version = dialog.value(2).trim();
-            if (kind.equals("feature")) {
-                String baseVersion = baseName.substring("release/".length());
-                if (version.isBlank()) version = baseVersion;
-                if (!version.equals(baseVersion)) throw new IllegalArgumentException("Feature 版本必须与 release 基线一致");
-            }
-            BranchRules.development(kind, version, dialog.value(3), dialog.value(4));
-            String template = kind.equals("feature") ? service.settings().getState().featureTemplate : kind.equals("release") ? service.settings().getState().releaseTemplate : service.settings().getState().hotfixTemplate;
-            String name = BranchRules.renderTemplate(template, version, dialog.value(3), dialog.value(4));
-            run(() -> { var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath()); return new Prepared(connection, project, api.ref(project.id(), baseKind, baseName), name, baseKind); }, prepared -> {
+            String suggestedBase = defaultBase;
+            run(() -> {
+                var connection = service.connection(); var api = connection.api(); var repository = api.project(connection.projectPath());
+                return new BranchBases(connection, repository, api.allRefs(repository.id(), "branch", ""), kind.equals("feature") ? List.of() : api.allRefs(repository.id(), "tag", ""));
+            }, bases -> {
+                String template = kind.equals("feature") ? service.settings().getState().featureTemplate : kind.equals("release") ? service.settings().getState().releaseTemplate : service.settings().getState().hotfixTemplate;
+                BranchCreateDialog dialog = new BranchCreateDialog(project, kind, template, bases.branches, bases.tags, suggestedBase);
+                if (!dialog.showAndGet()) return;
+                String name = dialog.branchName();
+                GitLabClient.Ref base = dialog.selectedBase();
+                Prepared prepared = new Prepared(bases.connection, bases.repo, base, name, dialog.baseKind());
                 if (!confirm("项目：" + prepared.repo.path() + "\n分支：" + name + "\n基线：" + prepared.base.name() + "\nSHA：" + prepared.base.sha() + "\n只创建远程分支。", "确认创建")) return;
                 run(() -> prepared.connection.api().createBranch(prepared.repo.id(), name, prepared.kind, prepared.base.name(), prepared.base.sha()), created -> {
                     Messages.showInfoMessage(project, "已创建：" + created.name(), "分支创建成功"); loadBranches(false);
@@ -543,7 +586,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             List<WorkbenchSettings.Conflict> available = tasks().stream().filter(task -> task.instance.equals(service.settings().getState().instance)).toList();
             if (available.isEmpty()) { Messages.showInfoMessage(project, "尚无关联的 conflict 任务，请从冲突 MR 创建分支。", "替代 MR"); return; }
             String[] labels = available.stream().map(task -> task.project + " · " + task.branch + " → " + task.target + " · !" + task.originalIid).toArray(String[]::new);
-            int choice = Messages.showChooseDialog(project, "选择处理任务", "替代 MR / 处理指引", null, labels, labels[0]);
+            int choice = conflictTaskList.getSelectedIndex();
+            if (choice < 0 || choice >= available.size()) choice = Messages.showChooseDialog(project, "选择处理任务", "替代 MR / 处理指引", null, labels, labels[0]);
             if (choice < 0) return;
             WorkbenchSettings.Conflict task = available.get(choice);
             int action = Messages.showDialog(project, "完成本地解决并推送后再创建替代 MR。", task.branch, new String[]{"创建 / 打开替代 MR", "处理指引", "核对 / 恢复远程分支", "归档已合并任务", "取消"}, 0, Messages.getQuestionIcon());
@@ -630,6 +674,66 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         }
         String value(int index) { JTextField field = fields.get(index); return field instanceof JPasswordField password ? new String(password.getPassword()) : field.getText(); }
         @Override protected JComponent createCenterPanel() { return panel; }
+    }
+    private static final class BranchCreateDialog extends DialogWrapper {
+        private final String kind, template;
+        private final List<GitLabClient.Ref> branches, tags;
+        private final JComboBox<String> baseKind = new JComboBox<>(new String[]{"branch", "tag"});
+        private final JComboBox<GitLabClient.Ref> base = new JComboBox<>();
+        private final JBTextField version = new JBTextField(), issue = new JBTextField(), description = new JBTextField();
+        private final JBLabel preview = new JBLabel();
+        private final JPanel panel = new JPanel(new GridLayout(0, 1, 0, 5));
+        private String branchName;
+        BranchCreateDialog(Project project, String kind, String template, List<GitLabClient.Ref> branches, List<GitLabClient.Ref> tags, String suggestedBase) {
+            super(project); this.kind = kind; this.template = template; this.branches = branches; this.tags = tags;
+            setTitle("新建 " + kind + " 远程分支");
+            base.setRenderer(new DefaultListCellRenderer() {
+                @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                    super.getListCellRendererComponent(list, value, index, selected, focus);
+                    if (value instanceof GitLabClient.Ref ref) setText(ref.name() + " · " + ref.sha().substring(0, 8) + (ref.title().isBlank() ? "" : " · " + ref.title()));
+                    return this;
+                }
+            });
+            panel.add(new JBLabel("基线类型")); panel.add(baseKind); panel.add(new JBLabel("在线基线")); panel.add(base);
+            panel.add(new JBLabel("版本号")); panel.add(version); panel.add(new JBLabel(kind.equals("feature") ? "Jira 工单号（例如 FOC-0009）" : "工单号（hotfix 必填）")); panel.add(issue);
+            panel.add(new JBLabel("英文短描述（hotfix 可选）")); panel.add(description); panel.add(new JBLabel("分支名预览")); panel.add(preview);
+            baseKind.setEnabled(!kind.equals("feature"));
+            baseKind.addActionListener(event -> { reloadBases(suggestedBase); updatePreview(); });
+            base.addActionListener(event -> { inferVersion(); updatePreview(); });
+            javax.swing.event.DocumentListener listener = new javax.swing.event.DocumentListener() {
+                public void insertUpdate(javax.swing.event.DocumentEvent event) { updatePreview(); }
+                public void removeUpdate(javax.swing.event.DocumentEvent event) { updatePreview(); }
+                public void changedUpdate(javax.swing.event.DocumentEvent event) { updatePreview(); }
+            };
+            version.getDocument().addDocumentListener(listener); issue.getDocument().addDocumentListener(listener); description.getDocument().addDocumentListener(listener);
+            panel.setPreferredSize(new Dimension(620, 430)); reloadBases(suggestedBase); init(); updatePreview();
+        }
+        private void reloadBases(String suggested) {
+            List<GitLabClient.Ref> values = baseKind().equals("tag") ? tags : branches;
+            base.removeAllItems();
+            values.stream().filter(ref -> !kind.equals("feature") || ref.name().matches("release/[^/]+"))
+                .sorted(Comparator.comparingInt(ref -> ref.name().equals(suggested) ? 0 : 1)).forEach(base::addItem);
+            inferVersion();
+        }
+        private void inferVersion() {
+            if (!kind.equals("feature") || !(base.getSelectedItem() instanceof GitLabClient.Ref ref) || !ref.name().startsWith("release/")) return;
+            String expected = ref.name().substring("release/".length());
+            if (!version.getText().equals(expected)) version.setText(expected);
+        }
+        private void updatePreview() {
+            try {
+                String value = version.getText().trim();
+                BranchRules.development(kind, value, issue.getText(), description.getText());
+                branchName = BranchRules.renderTemplate(template, value, issue.getText(), description.getText());
+                preview.setText(branchName); setErrorText(null); setOKActionEnabled(base.getSelectedItem() != null);
+            } catch (RuntimeException error) { branchName = null; preview.setText("尚未生成"); setErrorText(error.getMessage()); setOKActionEnabled(false); }
+        }
+        @Override protected void doOKAction() { updatePreview(); if (branchName != null && base.getSelectedItem() != null) super.doOKAction(); }
+        String branchName() { if (branchName == null) throw new IllegalStateException("分支名称尚未通过校验"); return branchName; }
+        String baseKind() { return (String)baseKind.getSelectedItem(); }
+        GitLabClient.Ref selectedBase() { return (GitLabClient.Ref)base.getSelectedItem(); }
+        @Override protected JComponent createCenterPanel() { return panel; }
+        @Override public JComponent getPreferredFocusedComponent() { return kind.equals("feature") ? issue : version; }
     }
     private static final class TextDialog extends DialogWrapper {
         final JTextField title = new JBTextField(); final JTextField reviewers = new JBTextField(); final JTextArea text = new JBTextArea();
