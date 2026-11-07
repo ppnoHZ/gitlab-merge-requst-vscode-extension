@@ -47,6 +47,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private final javax.swing.tree.DefaultMutableTreeNode branchRoot = new javax.swing.tree.DefaultMutableTreeNode("远程分支");
         private final Tree branchTree = new Tree(branchRoot);
         private final Map<String, String> mainStates = new HashMap<>();
+        private final Map<String, String> reviewedShas = new HashMap<>();
         private final JButton deleteBranchButton;
         private final JBCheckBox commonOnly = new JBCheckBox("仅常用分支", true);
         private final List<ActionToolbar> toolbars = new ArrayList<>();
@@ -59,7 +60,8 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             super(new BorderLayout(0, 6)); this.project = project; service = project.getService(WorkbenchService.class);
             setBorder(JBUI.Borders.empty(6));
             add(toolbar("GitLabWorkbench.Main", action("连接设置", com.intellij.icons.AllIcons.General.Settings, () -> true, this::configure),
-                action("刷新待办", com.intellij.icons.AllIcons.Actions.Refresh, () -> !service.busy(), () -> service.refresh(true))), BorderLayout.NORTH);
+                action("刷新待办", com.intellij.icons.AllIcons.Actions.Refresh, () -> !service.busy(), () -> service.refresh(true)),
+                action("上线总览", com.intellij.icons.AllIcons.General.Information, () -> !service.busy(), this::showReleaseOverview)), BorderLayout.NORTH);
             JPanel sections = new JPanel(); sections.setLayout(new BoxLayout(sections, BoxLayout.Y_AXIS));
             JPanel branchPanel = new JPanel(new BorderLayout(0, 4));
             JPanel query = new JPanel(new BorderLayout()); query.add(search, BorderLayout.CENTER); query.add(button("搜索 / 刷新", () -> loadBranches(false)), BorderLayout.EAST);
@@ -94,7 +96,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             JPanel filters = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0)); filters.add(commonOnly); filters.add(stateFilter);
             branchActions.add(filters, BorderLayout.WEST);
             AnAction createBranch = action("新建分支…", com.intellij.icons.AllIcons.General.Add, () -> !service.busy(), () -> {
-                String[] kinds = {"release", "hotfix"};
+                String[] kinds = {"feature", "release", "hotfix"};
                 int choice = Messages.showChooseDialog(project, "选择分支类型", "新建远程分支", null, kinds, kinds[0]);
                 if (choice >= 0) createBranch(kinds[choice]);
             });
@@ -163,6 +165,9 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
             todoPanel.add(new JBScrollPane(todoList), BorderLayout.CENTER);
             JPanel mrActions = new JPanel(new FlowLayout(FlowLayout.LEFT));
             mrActions.add(button("打开 MR", () -> BrowserUtil.browse(selected().url())));
+            mrActions.add(button("查看变更", this::showReviewChanges));
+            mrActions.add(button("批准", this::approveReview));
+            mrActions.add(button("合并", this::mergeReview));
             mrActions.add(button("创建 conflict", this::createConflict));
             mrActions.add(button("关闭原冲突 MR", this::closeOriginal));
             mrActions.add(button("替代 MR / 处理指引", this::replacement));
@@ -237,6 +242,7 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
                 branches.clear(); rebuildBranchTree(); next = 0; repo = null; branchStatus.setText("连接已变更，请重新加载分支"); more.setEnabled(false);
             }
             if (displayed != service.todos) {
+                reviewedShas.keySet().removeIf(key -> service.todos.reviews().stream().noneMatch(mr -> mr.key().equals(key) && mr.sha().equals(reviewedShas.get(key))));
                 Todo selection = todoList.getSelectedValue(); displayed = service.todos; todos.clear();
                 displayed.reviews().forEach(mr -> todos.addElement(new Todo(displayed.approvalsComplete() ? "待我审批" : "指派给我（审批状态未确认）", mr)));
                 displayed.authored().forEach(mr -> todos.addElement(new Todo("我提交的", mr)));
@@ -247,8 +253,65 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         private boolean confirm(String message, String title) { return Messages.showYesNoDialog(project, message, title, "确认", "取消", Messages.getQuestionIcon()) == Messages.YES; }
         private GitLabClient.Mr selected() { Todo value = todoList.getSelectedValue(); if (value == null) throw new IllegalStateException("请先选择 MR"); return value.mr; }
         private GitLabClient.Mr selectedFresh() { if (service.stale) throw new IllegalStateException("待办正在更新或显示旧数据，请刷新成功后重试"); return selected(); }
+        private GitLabClient.Mr selectedReviewFresh() {
+            GitLabClient.Mr mr = selectedFresh();
+            if (displayed == null || displayed.reviews().stream().noneMatch(item -> item.key().equals(mr.key()))) throw new IllegalStateException("请选择待我审批的 MR");
+            return mr;
+        }
+        private void showReviewChanges() {
+            GitLabClient.Mr selected = selectedFresh();
+            run(() -> service.connection().api().review(selected), snapshot -> {
+                String text = "MR !" + snapshot.mr().iid() + " · " + snapshot.mr().source() + " → " + snapshot.mr().target()
+                    + "\n审阅提交：" + snapshot.mr().sha() + "\n目标提交：" + snapshot.targetSha()
+                    + "\n\n提交历史（实际差异）\n" + String.join("\n", snapshot.changes().commits())
+                    + "\n\n变动文件（实际差异）\n" + String.join("\n", snapshot.changes().files())
+                    + "\n\n批准或合并前请核对所有变更；需要逐行 Diff 时请打开 GitLab。";
+                TextDialog dialog = new TextDialog(project, "Review Changes", "MR !" + snapshot.mr().iid(), text, false);
+                if (dialog.showAndGet()) reviewedShas.put(snapshot.mr().key(), snapshot.mr().sha());
+            });
+        }
+        private void approveReview() {
+            GitLabClient.Mr selected = selectedReviewFresh(); String sha = reviewedShas.get(selected.key());
+            if (!selected.sha().equals(sha)) throw new IllegalStateException("请先点击“查看变更”审阅当前提交");
+            if (!confirm("批准 MR !" + selected.iid() + "？\n审阅提交：" + sha + "\n此操作只批准，不执行合并。", "批准 Merge Request")) return;
+            run(() -> service.connection().api().approve(selected, sha), ignored -> { reviewedShas.remove(selected.key()); service.refresh(true); });
+        }
+        private void mergeReview() {
+            GitLabClient.Mr selected = selectedReviewFresh(); String sha = reviewedShas.get(selected.key());
+            if (!selected.sha().equals(sha)) throw new IllegalStateException("请先点击“查看变更”审阅当前提交");
+            if (!confirm("立即合并 MR !" + selected.iid() + "？\n" + selected.source() + " → " + selected.target() + "\n审阅提交：" + sha + "\n不会自动批准或等待流水线。", "合并 Merge Request")) return;
+            run(() -> service.connection().api().merge(selected, sha), ignored -> { reviewedShas.remove(selected.key()); service.refresh(true); });
+        }
         private void configure() {
             if (new ConnectionDialog(project, service).showAndGet()) loadBranches(false);
+        }
+        private void showReleaseOverview() {
+            run(() -> {
+                var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath());
+                List<GitLabClient.Ref> all = api.allBranches(project.id(), "");
+                List<GitLabClient.Ref> releases = all.stream().filter(ref -> ref.name().matches("release/[^/]+"))
+                    .sorted(Comparator.comparing(GitLabClient.Ref::name).reversed()).toList();
+                StringBuilder text = new StringBuilder("项目：" + project.path() + "\n默认分支：" + project.defaultBranch() + "\nRelease 数量：" + releases.size() + "\n\n");
+                if (releases.isEmpty()) text.append("没有远程 release/<版本> 分支。\n");
+                for (GitLabClient.Ref release : releases) {
+                    String version = release.name().substring("release/".length());
+                    List<GitLabClient.Ref> features = all.stream().filter(ref -> ref.name().startsWith("feature/" + version + "/")).toList();
+                    List<GitLabClient.Mr> requests = api.targetingMrs(project.id(), release.name());
+                    long opened = requests.stream().filter(mr -> mr.state().equals("opened")).count();
+                    long conflicts = requests.stream().filter(mr -> mr.state().equals("opened") && mr.conflict()).count();
+                    long merged = requests.stream().filter(mr -> mr.state().equals("merged")).count();
+                    text.append(release.name()).append(" · ").append(release.sha(), 0, 8)
+                        .append("\n  feature ").append(features.size()).append(" · MR 开放 ").append(opened)
+                        .append(" · 冲突 ").append(conflicts).append(" · 已合并 ").append(merged).append("\n");
+                    for (GitLabClient.Ref feature : features) {
+                        List<GitLabClient.Mr> matching = requests.stream().filter(mr -> mr.source().equals(feature.name())).toList();
+                        text.append("    ").append(feature.name()).append(" · ")
+                            .append(matching.isEmpty() ? "尚未创建 MR" : matching.stream().map(mr -> "!" + mr.iid() + " " + mr.state() + (mr.conflict() ? " 冲突" : "")).toList()).append("\n");
+                    }
+                    text.append("\n");
+                }
+                return text.toString();
+            }, text -> new TextDialog(project, "上线总览", "GitLab 上线总览", text, false).showAndGet());
         }
         private void loadBranches(boolean append) {
             if (service.busy()) return;
@@ -401,24 +464,34 @@ public final class WorkbenchToolWindow implements ToolWindowFactory {
         }
         private void branchSettings() {
             var settings = service.settings().getState();
-            Fields dialog = new Fields(project, "分支设置", new String[]{"允许删除已合入分支（true / false，默认 false）", "release 模板", "hotfix 模板"}, new String[]{String.valueOf(settings.allowBranchDeletion), settings.releaseTemplate, settings.hotfixTemplate}, -1);
+            Fields dialog = new Fields(project, "分支设置", new String[]{"允许删除已合入分支（true / false，默认 false）", "feature 模板", "release 模板", "hotfix 模板"}, new String[]{String.valueOf(settings.allowBranchDeletion), settings.featureTemplate, settings.releaseTemplate, settings.hotfixTemplate}, -1);
             if (!dialog.showAndGet()) return;
             if (!Set.of("true", "false").contains(dialog.value(0).trim())) throw new IllegalArgumentException("删除开关必须填写 true 或 false");
             BranchRules.renderTemplate(dialog.value(1), "TEST", "FOC-1", "");
             BranchRules.renderTemplate(dialog.value(2), "TEST", "FOC-1", "");
+            BranchRules.renderTemplate(dialog.value(3), "TEST", "FOC-1", "");
             settings.allowBranchDeletion = Boolean.parseBoolean(dialog.value(0).trim());
-            settings.releaseTemplate = dialog.value(1); settings.hotfixTemplate = dialog.value(2);
+            settings.featureTemplate = dialog.value(1); settings.releaseTemplate = dialog.value(2); settings.hotfixTemplate = dialog.value(3);
             updateDeleteButton(); rebuildBranchTree();
         }
         private void createBranch(String kind) {
             var selectedNode = (javax.swing.tree.DefaultMutableTreeNode)branchTree.getLastSelectedPathComponent();
             String defaultBase = selectedNode != null && selectedNode.getUserObject() instanceof GitLabClient.Ref ref ? ref.name() : repo == null ? "main" : repo.defaultBranch();
+            if (kind.equals("feature") && !defaultBase.startsWith("release/")) defaultBase = "release/";
             Fields dialog = new Fields(project, "新建 " + kind, new String[]{"基线类型（branch / tag）", "基线名称（hotfix 建议使用线上 Tag）", "版本号", "工单号（hotfix 必填）", "英文短描述（可选）"}, new String[]{"branch", defaultBase, "", "", ""}, -1);
             if (!dialog.showAndGet()) return;
             String baseKind = dialog.value(0).trim(), baseName = dialog.value(1).trim();
             if (!Set.of("branch", "tag").contains(baseKind)) throw new IllegalArgumentException("基线类型必须是 branch 或 tag");
-            BranchRules.development(kind, dialog.value(2), dialog.value(3), dialog.value(4));
-            String name = BranchRules.renderTemplate(kind.equals("release") ? service.settings().getState().releaseTemplate : service.settings().getState().hotfixTemplate, dialog.value(2), dialog.value(3), dialog.value(4));
+            if (kind.equals("feature") && (!baseKind.equals("branch") || !baseName.matches("release/[A-Za-z0-9][A-Za-z0-9._-]*"))) throw new IllegalArgumentException("Feature 只能从 release/<版本> 分支创建");
+            String version = dialog.value(2).trim();
+            if (kind.equals("feature")) {
+                String baseVersion = baseName.substring("release/".length());
+                if (version.isBlank()) version = baseVersion;
+                if (!version.equals(baseVersion)) throw new IllegalArgumentException("Feature 版本必须与 release 基线一致");
+            }
+            BranchRules.development(kind, version, dialog.value(3), dialog.value(4));
+            String template = kind.equals("feature") ? service.settings().getState().featureTemplate : kind.equals("release") ? service.settings().getState().releaseTemplate : service.settings().getState().hotfixTemplate;
+            String name = BranchRules.renderTemplate(template, version, dialog.value(3), dialog.value(4));
             run(() -> { var connection = service.connection(); var api = connection.api(); var project = api.project(connection.projectPath()); return new Prepared(connection, project, api.ref(project.id(), baseKind, baseName), name, baseKind); }, prepared -> {
                 if (!confirm("项目：" + prepared.repo.path() + "\n分支：" + name + "\n基线：" + prepared.base.name() + "\nSHA：" + prepared.base.sha() + "\n只创建远程分支。", "确认创建")) return;
                 run(() -> prepared.connection.api().createBranch(prepared.repo.id(), name, prepared.kind, prepared.base.name(), prepared.base.sha()), created -> {

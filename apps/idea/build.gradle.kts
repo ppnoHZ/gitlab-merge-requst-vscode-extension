@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.20.0"
 }
 group = "com.gitlabworkbench"
-version = "0.1.5"
+version = "0.1.6"
 
 val ideaVersion = providers.gradleProperty("ideaVersion").orElse("2026.3")
 repositories {

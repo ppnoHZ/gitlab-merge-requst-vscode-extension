@@ -7,9 +7,13 @@ public final class BranchRules {
     private BranchRules() {}
     public static String development(String kind, String version, String issue, String description) {
         version = version.trim(); issue = issue.trim(); description = description.trim();
-        if (!Set.of("release", "hotfix").contains(kind)) throw new IllegalArgumentException("仅支持 release 和 hotfix");
+        if (!Set.of("feature", "release", "hotfix").contains(kind)) throw new IllegalArgumentException("仅支持 feature、release 和 hotfix");
         if (!version.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,79}") || invalidSegment(version)) throw new IllegalArgumentException("版本号格式无效");
         if (kind.equals("release")) return "release/" + version;
+        if (kind.equals("feature")) {
+            if (!issue.matches("[A-Z][A-Z0-9]*-\\d+")) throw new IllegalArgumentException("Feature 工单号需符合 Jira 格式，例如 FOC-0007");
+            return "feature/" + version + "/" + issue;
+        }
         if (!issue.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,99}")) throw new IllegalArgumentException("请填写有效工单号");
         if (!description.isEmpty() && !description.matches("[a-z0-9][a-z0-9-]{0,79}")) throw new IllegalArgumentException("短描述只能使用小写字母、数字和横线");
         return "hotfix/" + version + "/" + issue + (description.isEmpty() ? "" : "-" + description);

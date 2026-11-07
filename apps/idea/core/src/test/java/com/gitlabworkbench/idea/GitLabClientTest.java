@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class GitLabClientTest {
     static final String SHA = "a".repeat(40), OTHER = "b".repeat(40);
     HttpServer server; ExecutorService executor; GitLabClient api; String base;
-    volatile String mode = "normal"; volatile boolean created, closed;
+    volatile String mode = "normal"; volatile boolean created, closed, approved;
     final AtomicInteger posts = new AtomicInteger(); final List<String> paths = Collections.synchronizedList(new ArrayList<>());
     volatile JsonObject body;
     @BeforeEach void start() throws Exception {
@@ -31,6 +31,14 @@ class GitLabClientTest {
         if (mode.equals("redirect")) { exchange.getResponseHeaders().set("Location", base + "/other"); send(exchange, 302, "{}"); return; }
         if (mode.startsWith("http-")) { send(exchange, Integer.parseInt(mode.substring(5)), "{\"message\":\"test-token must not be shown\"}"); return; }
         if (mode.equals("login-page")) { send(exchange, 200, "<html>SSO login test-token</html>"); return; }
+        if (path.endsWith("/approve") && exchange.getRequestMethod().equals("POST")) {
+            posts.incrementAndGet(); approved = true; body = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+            send(exchange, 200, "{\"approved_by\":[{\"user\":{\"id\":7}}]}"); return;
+        }
+        if (path.endsWith("/merge") && exchange.getRequestMethod().equals("PUT")) {
+            posts.incrementAndGet(); body = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+            send(exchange, 200, mr(1, "release/1", "merged").replace("\"has_conflicts\":true,\"detailed_merge_status\":\"conflict\"", "\"has_conflicts\":false,\"detailed_merge_status\":\"mergeable\"")); return;
+        }
         if (exchange.getRequestMethod().equals("POST")) {
             posts.incrementAndGet(); body = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
             if (path.endsWith("/branches")) { created = true; if (mode.equals("lost")) { send(exchange, 500, "{}"); return; } send(exchange, 201, ref(body.get("branch").getAsString(), body.get("ref").getAsString())); }
@@ -49,7 +57,7 @@ class GitLabClientTest {
         if (path.contains("/branches/")) {
             String name = path.substring(path.indexOf("/branches/") + 10);
             if (!Set.of("main", "tst", "release/1").contains(name) && !created) { send(exchange, mode.equals("denied") ? 403 : 404, "{}"); return; }
-            String payload = ref(name, mode.equals("changed") ? OTHER : SHA);
+            String payload = ref(name, mode.equals("changed") || mode.equals("review") && name.equals("tst") ? OTHER : SHA);
             if (mode.equals("delete-test") || mode.equals("protected")) { JsonObject value = JsonParser.parseString(payload).getAsJsonObject(); value.addProperty("protected", mode.equals("protected")); value.addProperty("default", name.equals("main")); payload = value.toString(); }
             send(exchange, 200, payload); return;
         }
@@ -57,9 +65,9 @@ class GitLabClientTest {
         if (path.endsWith("/compare")) { send(exchange, 200, "{\"compare_timeout\":" + mode.equals("truncated") + ",\"commits\":[{\"short_id\":\"abc\",\"title\":\"change\"}],\"diffs\":[{\"new_path\":\"actual.txt\",\"old_path\":\"actual.txt\"}]}"); return; }
         if (path.endsWith("/approvals")) {
             if (mode.equals("approval-failure")) { send(exchange, 403, "{}"); return; }
-            send(exchange, 200, "{\"approved_by\":" + (path.contains("/2/") ? "[{\"user\":{\"id\":7}}]" : "[]") + "}"); return;
+            send(exchange, 200, "{\"approved_by\":" + (approved || path.contains("/2/") ? "[{\"user\":{\"id\":7}}]" : "[]") + "}"); return;
         }
-        if (path.matches(".*/merge_requests/\\d+")) { long iid = Long.parseLong(path.substring(path.lastIndexOf('/') + 1)); send(exchange, 200, mr(iid, "release/1", closed ? "closed" : "opened")); return; }
+        if (path.matches(".*/merge_requests/\\d+")) { long iid = Long.parseLong(path.substring(path.lastIndexOf('/') + 1)); String payload = mr(iid, "release/1", closed ? "closed" : "opened"); if (mode.equals("review")) payload = payload.replace("\"has_conflicts\":true,\"detailed_merge_status\":\"conflict\"", "\"has_conflicts\":false,\"detailed_merge_status\":\"mergeable\""); send(exchange, 200, payload); return; }
         if (path.endsWith("/merge_requests")) { exchange.getResponseHeaders().set("X-Next-Page", ""); send(exchange, 200, "[" + mr(1, "release/1", "opened") + "," + mr(2, "release/1", "opened") + "," + mr(1, "release/1", "opened") + "]"); return; }
         send(exchange, 404, "{}");
     }
@@ -88,6 +96,13 @@ class GitLabClientTest {
     @Test void closesOnlyConfirmedVersionAndReconcilesLostResponse() { var original = api.mr(3, 1); mode = "lost"; api.closeOriginal(original); assertTrue(closed); api.closeOriginal(original); }
     @Test void comparisonUsesActualShasAndRejectsIncompleteData() { var result = api.compare(3, SHA, OTHER); assertEquals(List.of("M actual.txt"), result.files()); assertTrue(paths.getLast().contains("straight=false")); assertTrue(paths.getLast().contains("from=" + OTHER)); mode = "truncated"; assertThrows(IllegalStateException.class, () -> api.compare(3, SHA, OTHER)); }
     @Test void replacementForcesTargetRulesAndMergeOptions() { var result = api.createReplacement(3, "conflict/release/1", "tst", "Title", "Description", List.of(7L)); assertEquals(9, result.iid()); assertTrue(body.get("remove_source_branch").getAsBoolean()); assertFalse(body.get("squash").getAsBoolean()); assertEquals(7, body.getAsJsonArray("reviewer_ids").get(0).getAsInt()); assertThrows(IllegalArgumentException.class, () -> api.createReplacement(3, "conflict/release/1", "main", "Title", "Description", List.of(7L))); }
+    @Test void reviewPinsShaBeforeApproveAndMerge() {
+        mode = "review"; var mr = api.mr(3, 1); var snapshot = api.review(mr);
+        assertEquals(SHA, snapshot.mr().sha()); assertEquals(OTHER, snapshot.targetSha()); assertEquals(List.of("M actual.txt"), snapshot.changes().files());
+        api.approve(mr, SHA); assertTrue(approved); assertEquals(SHA, body.get("sha").getAsString());
+        var merged = api.merge(mr, SHA); assertEquals("merged", merged.state()); assertFalse(body.get("auto_merge").getAsBoolean());
+        assertThrows(IllegalStateException.class, () -> api.approve(mr, OTHER));
+    }
     @Test void requestTimeoutAndRedirectProtection() { mode = "slow"; assertThrows(GitLabClient.ApiException.class, () -> new GitLabClient(base, "test-token", Duration.ofMillis(80)).project("g/p")); mode = "redirect"; assertEquals(302, assertThrows(GitLabClient.ApiException.class, () -> api.project("g/p")).status); }
     @Test void validatesInstanceAndConflictRules() { assertThrows(IllegalArgumentException.class, () -> GitLabClient.normalizeInstance("https://token@gitlab.test")); assertThrows(IllegalArgumentException.class, () -> GitLabClient.normalizeInstance("file:///tmp")); assertEquals("https://gitlab.test", GitLabClient.normalizeInstance("https://gitlab.test/")); api.mr(3, 1).requireConflict(); }
     @Test void connectionTestChecksAuthenticationThenProjectWithoutWriting() {

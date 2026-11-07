@@ -21,6 +21,7 @@ public final class WorkbenchSettings implements PersistentStateComponent<Workben
         public boolean allowBranchDeletion = false;
         public boolean commonBranchesOnly = true;
         public String mainFilter = "全部";
+        public String featureTemplate = "feature/{version}/{issue}";
         public String releaseTemplate = "release/{version}";
         public String hotfixTemplate = "hotfix/{version}/{issue}{descriptionSuffix}";
         public List<Conflict> conflicts = new ArrayList<>();
@@ -31,4 +32,5 @@ public final class WorkbenchSettings implements PersistentStateComponent<Workben
     public static CredentialAttributes credential(String instance) { return new CredentialAttributes("GitLab Workbench: " + GitLabClient.normalizeInstance(instance), "token", null, false); }
     public String token(String instance) { return PasswordSafe.getInstance().getPassword(credential(instance)); }
     public void storeToken(String instance, String token) { PasswordSafe.getInstance().setPassword(credential(instance), token); }
+    public void clearToken(String instance) { PasswordSafe.getInstance().setPassword(credential(instance), null); }
 }

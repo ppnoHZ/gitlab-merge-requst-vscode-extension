@@ -8,13 +8,15 @@
 - 连接设置自动从当前项目的 Git remote 识别实例网页地址与项目路径，支持 HTTPS、SSH、子组及 `.git` 后缀。多个仓库/remote 时可选择后填入，不执行 fetch。已有配置不会被自动覆盖；SSH 的网页协议、端口和部署子路径无法完全推断，可手动调整。当前仅接入 GitLab。
 - **保存配置**与**测试连接**独立：离线也能保存；测试只检查当前 Token 和项目访问权限，不改动配置，失败时窗口保留输入。支持填写项目首页 URL，实例地址的 `/api/v4` 后缀会自动去除。
 - Personal Access Token 需有 `api` 权限，存入 IDE PasswordSafe，按实例隔离。留空保留当前实例已有凭据，界面显示是否已保存而不回显 Token。IDE 的 Passwords 设置需选择持久化凭据存储；若设置为“不保存”，Token 无法跨重启保留。
-- 分支分页加载、关键词/前缀搜索，创建 release/hotfix；支持 branch 或 tag 基线，提交 SHA 二次校验。未知写入结果先核对远程状态，不自动重复提交。
+- 分支分页加载、关键词/前缀搜索，创建 feature/release/hotfix；feature 只能从对应 `release/<版本>` 创建并校验 Jira 工单号，支持可配置模板。release/hotfix 支持 branch 或 tag 基线，提交 SHA 二次校验。未知写入结果先核对远程状态，不自动重复提交。
 - 我的待办展示“我提交的”和“待我审批”的开放 MR。有确认冲突的 MR 使用红色图标；状态未知不标为已确认无冲突。
+- MR 可查看两个固定提交间的实际提交历史和变动文件。待审批 MR 只有在查看当前 SHA 后才能批准或立即合并；操作前重新核对 Reviewer、SHA、冲突及 GitLab mergeable 状态，代码变化后必须重新审阅。逐文件 IDE Diff 尚未接入，精细审阅可打开 GitLab。
 - 状态栏显示待审批数量，每 60 秒刷新，点击打开工作台。列表与计数共用一次查询，已批准 MR 不计数。首次成功加载建立基线，后续发现新增待审批 MR 时在 IDE 右下角通知。失败保留旧列表、计数显示 `?`，更新及失败期间禁止从旧项启动冲突处理。审批接口返回 403/404/405 时仍展示已加载的 MR，指派给我的项目标为“审批状态未确认”，数量显示 `?`，不伪装为 0。
 - 从同仓库 release/hotfix → dev/tst/uat/pre 的冲突 MR 创建 `conflict/<完整 Source>`。创建基线固定为 Target，保留任务关联；原 MR 的关闭是独立确认操作。
 - 通过 IDEA 自带 Git 工具人工解决、测试、提交和推送后，在“替代 MR / 处理指引”选择关联任务。替代 MR 固定原 Target、附原 MR 链接，继承原 Reviewer ID，可编辑标题、描述和 Reviewer。
 - 描述保留分支、工单、自检清单和生成说明。提交及文件列表使用两个确认 SHA 的 GitLab compare 实际差异；响应超时或已知截断时停止生成。确认后 SHA 变化则重新预览。
 - 替代 MR 固定删除源分支、禁止 Squash；未知创建结果先查询已有 MR，避免重复。任务支持核对/恢复远程分支、已合并任务归档。
+- 顶部“上线总览”直接汇总远程 release、同版本 feature 及目标 MR 的开放、冲突、已合并数量。连接设置可测试 Token/项目访问，并可明确清除当前实例在 PasswordSafe 中保存的 Token。
 
 本插件不执行本地切分支、merge、worktree、commit 或 push；不自动解决冲突。任务和连接配置保存于项目 `.idea/gitlab-workbench.xml`，不含 Token，但含内部实例/项目/MR 信息，按团队约定决定是否纳入版本控制。任务记录不作为团队共享锁。
 
@@ -37,7 +39,7 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.5.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.6.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
 仓库内 GitHub Actions 工作流 **IDEA plugin** 会从 JetBrains 官方发布接口解析最新稳定版，随后构建、运行测试并验证插件配置；每周一也会自动执行一次，尽早发现新版 API 不兼容。成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
@@ -61,7 +63,7 @@ node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
 
 分支管理按 VS Code 的 `/` 目录层级展示远程分支，默认折叠目录。顶部可搜索，默认仅展示常用分支（包括 conflict）；取消“仅常用分支”可查看全部已加载分支。选中真实分支后可复制完整名称、在 GitLab 打开分支，或将其作为新建 release/hotfix 的默认基线。目录不能执行复制或打开操作。分页失败保留已加载内容，可重试。
 
-当前仍未达到 VS Code 分支管理完整能力：规范模板与状态筛选仍需补齐；main 检查与安全删除见下文。
+IDEA 与 VS Code 的核心 GitLab 远程流程已对齐到 feature/release/hotfix 创建、分支状态、安全删除、MR 创建、待办审阅、批准/合并、上线总览及 conflict 替代 MR。VS Code 特有的多根工作区聚合、IDE 内逐文件虚拟 Diff、操作审计和终端 Interactive Rebase 尚未移植；这些能力涉及 IDEA 工程模型、编辑器 Diff API 和独立审计存储，不能用不完整占位替代。
 
 分支列表现在自动读取全部分页，所有页面成功后替换快照，失败保留旧数据。“检查分支 / release”完整读取目标 MR，release 额外汇总同版本 feature 与 MR 状态。“创建 MR”预览实际 SHA 差异并在提交前重新校验双分支 SHA，重名开放 MR 会阻止创建。
 

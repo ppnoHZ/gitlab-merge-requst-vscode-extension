@@ -7,6 +7,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BranchRulesTest {
+    @Test void featureMustUseJiraIssue() {
+        assertEquals("feature/LI2500076/FOC-0009", BranchRules.development("feature", "LI2500076", "FOC-0009", ""));
+        assertThrows(IllegalArgumentException.class, () -> BranchRules.development("feature", "LI2500076", "0009", ""));
+    }
     @Test void sharedNamingContracts() throws Exception {
         JsonArray cases = JsonParser.parseString(Files.readString(Path.of(System.getProperty("contracts.path")))).getAsJsonArray();
         for (JsonElement item : cases) {

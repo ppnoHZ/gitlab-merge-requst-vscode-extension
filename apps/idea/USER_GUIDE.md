@@ -1,7 +1,7 @@
 # IDEA 分支管理使用指南
 
 1. 打开 View → Tool Windows → GitLab Workbench，配置 GitLab 连接及 Token。
-2. 进入“分支管理”，输入关键词并搜索。分支按 `/` 逐层展开，默认包含 conflict；取消“仅常用分支”可显示全部结果。
+2. 进入“分支管理”，输入关键词并搜索。分支按 `/` 逐层展开，默认包含 conflict；取消“仅常用分支”可显示全部结果。新建分支支持 feature、release 和 hotfix。
 3. 加载完成后后台检查 main，真实分支叶节点显示“已合入 main”“未合入 main”或“main 状态未知”。目录不显示状态，未知时可刷新重试。
 4. 选中已合入的分支，点击“删除已合入分支”并确认。插件重新核对保护状态、分支 SHA 和 main SHA；默认分支、main、受保护分支及状态未知的分支禁止删除。本地分支保留。
 5. 删除请求失败时先刷新或打开 GitLab 核实，避免重复操作。
@@ -13,7 +13,8 @@
 ## 筛选、模板与安全开关
 
 - “仅常用分支”和 main 状态筛选按项目保存，重启后保留。不同筛选条件取交集。
-- “分支设置”可配置 release/hotfix 名称模板。支持 `{version}`、`{issue}`、`{description}`、`{descriptionSuffix}`；保存和创建时检查名称合法性。
+- “分支设置”可配置 feature/release/hotfix 名称模板。支持 `{version}`、`{issue}`、`{description}`、`{descriptionSuffix}`；保存和创建时检查名称合法性。
+- feature 默认模板为 `feature/{version}/{issue}`，只能选择 `release/<版本>` 分支作为基线，版本必须一致，工单号需符合 Jira 格式（例如 `FOC-0009`）。
 - 远程删除默认关闭，在“分支设置”明确填写 true 后才显示合规分支的删除入口。
 - 从分支创建 MR 时只展示符合 Source 类型的目标，同版本 release 优先。没有目标时清空搜索并重新加载。
 
@@ -43,6 +44,9 @@
 - 搜索框、分支树、状态筛选、MR 列表和连接字段提供可访问名称，支持键盘焦点及屏幕阅读器识别。组件间距、表单标签和边距使用 IntelliJ 平台规范并跟随 IDE 主题。
 - 连接窗口使用标准标签表单。Token 仍保存到 PasswordSafe，测试连接在后台执行，失败保留输入。
 - 第一次成功加载只建立待审批基线，不弹通知。此后轮询发现新增的待审批 MR 时，IDE 右下角显示通知；刷新失败或审批状态未确认时不会误报。
+- “查看变更”读取 Source/Target 固定 SHA 间的实际提交和文件清单。查看成功后才允许对待审批 MR 执行“批准”或“合并”；任何 SHA、分支方向、Reviewer 或合并状态变化都会停止写入。
+- “上线总览”汇总所有 `release/<版本>`、同版本 feature 和目标 MR 状态。数据直接来自 GitLab，不依赖本地 fetch。
+- 连接设置中的“清除该实例已保存的 Token”只删除当前 GitLab 地址在 PasswordSafe 中的凭据，不删除项目配置或其他实例 Token。
 
 ## IDEA 版本兼容
 

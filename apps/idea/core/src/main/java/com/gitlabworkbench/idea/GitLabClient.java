@@ -28,6 +28,7 @@ public final class GitLabClient {
         public Todos(List<Mr> authored, List<Mr> reviews) { this(authored, reviews, true); }
     }
     public record Comparison(List<String> commits, List<String> files) {}
+    public record ReviewSnapshot(Mr mr, String targetSha, Comparison changes) {}
     public static final class ApiException extends RuntimeException {
         public final int status;
         ApiException(String message, int status) { super(message); this.status = status; }
@@ -194,6 +195,37 @@ public final class GitLabClient {
         return mr(request("POST", "/projects/" + project + "/merge_requests", body).data.getAsJsonObject());
     }
     public Mr mr(long project, long iid) { return mr(get("/projects/" + project + "/merge_requests/" + iid)); }
+    public ReviewSnapshot review(Mr expected) {
+        Mr current = mr(get("/projects/" + expected.project + "/merge_requests/" + expected.iid + "?with_merge_status_recheck=true"));
+        sameVersion(expected, current);
+        if (!current.state.equals("opened")) throw new IllegalStateException("MR 已关闭或合并，请刷新待办");
+        Ref source = ref(current.project, "branch", current.source), target = ref(current.project, "branch", current.target);
+        if (!source.sha.equals(current.sha)) throw new IllegalStateException("MR Source 与远程分支提交尚未同步，请刷新后重试");
+        return new ReviewSnapshot(current, target.sha, compare(current.project, source.sha, target.sha));
+    }
+    public Mr approve(Mr expected, String reviewedSha) {
+        requireSha(reviewedSha);
+        Mr current = mr(expected.project, expected.iid); sameVersion(expected, current);
+        if (!current.sha.equals(reviewedSha) || !current.state.equals("opened")) throw new IllegalStateException("MR 代码已更新或状态已变化，请重新查看变更");
+        long user = id(get("/user"), "id");
+        if (!current.reviewers.contains(user)) throw new IllegalStateException("你已不再是此 MR 的 Reviewer，请刷新");
+        JsonObject body = new JsonObject(); body.addProperty("sha", reviewedSha);
+        request("POST", "/projects/" + current.project + "/merge_requests/" + current.iid + "/approve", body);
+        JsonArray approved = get("/projects/" + current.project + "/merge_requests/" + current.iid + "/approvals").getAsJsonArray("approved_by");
+        if (approved == null || java.util.stream.StreamSupport.stream(approved.spliterator(), false).noneMatch(item -> optionalId(item.getAsJsonObject().getAsJsonObject("user"), "id") == user)) throw new IllegalStateException("GitLab 未确认批准结果，请刷新核对，不要重复提交");
+        return current;
+    }
+    public Mr merge(Mr expected, String reviewedSha) {
+        requireSha(reviewedSha);
+        Mr current = mr(get("/projects/" + expected.project + "/merge_requests/" + expected.iid + "?with_merge_status_recheck=true"));
+        sameVersion(expected, current);
+        if (!current.sha.equals(reviewedSha) || !current.state.equals("opened")) throw new IllegalStateException("MR 代码已更新或状态已变化，请重新查看变更");
+        if (current.conflict || !current.mergeStatus.equals("mergeable")) throw new IllegalStateException("GitLab 未确认 MR 可立即合并，请检查冲突、流水线和审批规则");
+        JsonObject body = new JsonObject(); body.addProperty("sha", reviewedSha); body.addProperty("merge_when_pipeline_succeeds", false); body.addProperty("auto_merge", false);
+        Mr merged = mr(request("PUT", "/projects/" + current.project + "/merge_requests/" + current.iid + "/merge", body).data.getAsJsonObject());
+        if (!merged.state.equals("merged") || !merged.sha.equals(reviewedSha) || merged.project != current.project || merged.iid != current.iid) throw new IllegalStateException("GitLab 未确认合并结果，请在网页核对，不要重复提交");
+        return merged;
+    }
     public Todos todos() {
         long user = id(get("/user"), "id");
         Map<String, Mr> details = new HashMap<>();

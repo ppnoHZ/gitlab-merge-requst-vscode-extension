@@ -4,6 +4,7 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.ui.components.*;
 import com.intellij.util.concurrency.AppExecutorUtil;
@@ -23,6 +24,7 @@ final class ConnectionDialog extends DialogWrapper {
     private final JTextField instance = new JBTextField(), path = new JBTextField();
     private final JPasswordField token = new JPasswordField();
     private final JButton test = new JButton("测试连接（不保存）");
+    private final JButton clearToken = new JButton("清除该实例已保存的 Token");
     private final JLabel feedback = new JBLabel("保存无需联网；测试成功后仍需点击“保存配置”。");
     private final JLabel credentialStatus = new JBLabel();
     private record Remote(String root, String name, String url) {
@@ -55,6 +57,7 @@ final class ConnectionDialog extends DialogWrapper {
             .addTooltip("需要 api 权限；留空会保留该实例已经保存的凭据。")
             .addComponent(credentialStatus)
             .addComponent(test)
+            .addComponent(clearToken)
             .addComponent(feedback)
             .addComponent(new JBLabel("网络设置：Settings → HTTP Proxy / Server Certificates"))
             .addComponentFillVertically(new JPanel(), 0)
@@ -66,6 +69,7 @@ final class ConnectionDialog extends DialogWrapper {
         path.getAccessibleContext().setAccessibleName("GitLab 项目路径");
         token.getAccessibleContext().setAccessibleName("GitLab Personal Access Token");
         test.addActionListener(event -> testConnection());
+        clearToken.addActionListener(event -> clearCredential());
         useRemote.addActionListener(event -> fillFromRemote());
         init();
         useRemote.setEnabled(remotes.getItemCount() > 0);
@@ -125,6 +129,16 @@ final class ConnectionDialog extends DialogWrapper {
             }, repo -> feedback.setText("连接成功：" + repo.path() + "。请点击“保存配置”保存当前输入。"));
         } catch (RuntimeException error) { showError(error); }
     }
+    private void clearCredential() {
+        if (busy) return;
+        try {
+            String address = GitLabClient.normalizeInstance(instance.getText());
+            if (Messages.showYesNoDialog(project, "清除 " + address + " 在 IDEA PasswordSafe 中保存的 Token？\n项目配置和其他实例凭据不会删除。", "清除 Access Token", "清除", "取消", Messages.getWarningIcon()) != Messages.YES) return;
+            background(false, "正在清除 PasswordSafe 凭据…", () -> { service.settings().clearToken(address); return address; }, ignored -> {
+                token.setText(""); credentialStatus.setText("该实例尚未保存 Token。"); feedback.setText("Token 已从 IDEA PasswordSafe 清除。");
+            });
+        } catch (RuntimeException error) { showError(error); }
+    }
 
     @Override protected void doOKAction() {
         if (busy) return;
@@ -158,7 +172,7 @@ final class ConnectionDialog extends DialogWrapper {
         });
     }
     private void enableInputs(boolean enabled) {
-        instance.setEnabled(enabled); path.setEnabled(enabled); token.setEnabled(enabled); test.setEnabled(enabled);
+        instance.setEnabled(enabled); path.setEnabled(enabled); token.setEnabled(enabled); test.setEnabled(enabled); clearToken.setEnabled(enabled);
         remotes.setEnabled(enabled); useRemote.setEnabled(enabled && remotes.getItemCount() > 0);
         setOKActionEnabled(enabled); getCancelAction().setEnabled(enabled || !saving);
     }
