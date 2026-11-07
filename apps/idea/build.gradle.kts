@@ -1,16 +1,18 @@
 plugins {
     java
-    id("org.jetbrains.intellij.platform") version "2.19.0"
+    id("org.jetbrains.intellij.platform") version "2.20.0"
 }
 group = "com.gitlabworkbench"
-version = "0.1.3"
+version = "0.1.4"
+
+val ideaVersion = providers.gradleProperty("ideaVersion").orElse("2026.3")
 repositories {
     mavenCentral()
     intellijPlatform { defaultRepositories() }
 }
 dependencies {
     intellijPlatform {
-        intellijIdea("2026.2.3")
+        intellijIdea(ideaVersion.get())
         bundledPlugin("Git4Idea")
         bundledModule("intellij.platform.vcs.dvcs")
         bundledModule("intellij.platform.vcs.dvcs.impl")
@@ -30,7 +32,7 @@ intellijPlatform {
         id = "com.gitlabworkbench.idea"
         name = "GitLab Workbench"
         version = project.version.toString()
-        ideaVersion { sinceBuild = "243"; untilBuild = "262.*" }
+        ideaVersion { sinceBuild = "243" }
     }
 }
 tasks.test {

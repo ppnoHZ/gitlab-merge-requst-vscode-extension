@@ -1,5 +1,7 @@
 name: IDEA plugin
 on:
+  schedule:
+    - cron: '17 2 * * 1'
   push:
     paths:
       - 'apps/idea/**'
@@ -27,11 +29,21 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Resolve latest stable IntelliJ IDEA
+        id: idea
+        run: |
+          latest=$(curl --fail --silent --show-error --location \
+            'https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release' \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["IIU"][0]["version"])')
+          test -n "$latest"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+          echo "Validating against IntelliJ IDEA $latest" >> "$GITHUB_STEP_SUMMARY"
       - name: Build and test
         run: |
           mkdir -p build
           set -o pipefail
-          ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration --no-daemon 2>&1 | tee build/ci-build.log
+          ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration \
+            -PideaVersion='${{ steps.idea.outputs.version }}' --no-daemon 2>&1 | tee build/ci-build.log
       - name: Build diagnostics
         if: always()
         run: |

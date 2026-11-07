@@ -1,6 +1,6 @@
 # GitLab Workbench for IntelliJ IDEA
 
-面向自建 GitLab 的远程分支和 MR 工作台。使用 Java 25 和 IntelliJ Platform SDK，以当前最新稳定版 IntelliJ IDEA 2026.2.3（262 系列）构建；插件字节码保持 Java 21，兼容范围为 IntelliJ Platform 243 至 262 系列。其他 JetBrains 产品需另行验证，不声明已兼容。
+面向自建 GitLab 的远程分支和 MR 工作台。使用 Java 25 和 IntelliJ Platform SDK，默认以当前稳定版 IntelliJ IDEA 2026.3 构建；插件字节码保持 Java 21，最低兼容 IntelliJ Platform 243，不设置安装上限。其他 JetBrains 产品需另行验证，不声明已兼容。
 
 ## 功能
 
@@ -22,28 +22,31 @@
 
 ## 构建、测试与安装
 
-需要 **JDK 25**（含 javac），以及可以访问 Maven Central、Gradle 和 JetBrains SDK 仓库的网络。构建使用 Gradle 9.1.0 和 IntelliJ Platform Gradle Plugin 2.19.0。
+需要 **JDK 25**（含 javac），以及可以访问 Maven Central、Gradle 和 JetBrains SDK 仓库的网络。构建使用 Gradle 9.1.0 和 IntelliJ Platform Gradle Plugin 2.20.0。
 
 ```sh
 # 在仓库根目录
 node scripts/idea.mjs :core:test
 node scripts/idea.mjs buildPlugin
 
+# 验证指定的 IDEA 版本（CI 会自动填入官方最新稳定版）
+node scripts/idea.mjs buildPlugin -PideaVersion=2026.3
+
 # 或在 apps/idea 中
 ./gradlew :core:test buildPlugin verifyPluginProjectConfiguration
 # Windows: gradlew.bat :core:test buildPlugin verifyPluginProjectConfiguration
 ```
 
-安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.3.zip`。
+安装包预期输出：`apps/idea/build/distributions/gitlab-workbench-idea-0.1.4.zip`。
 在 IDEA 的 **Settings → Plugins → 齿轮 → Install Plugin from Disk** 选择构建产物，重启后打开工作台。`./gradlew runIde` 可启动开发沙箱。
 
-仓库内 GitHub Actions 工作流 **IDEA plugin** 会构建和运行测试；成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
+仓库内 GitHub Actions 工作流 **IDEA plugin** 会从 JetBrains 官方发布接口解析最新稳定版，随后构建、运行测试并验证插件配置；每周一也会自动执行一次，尽早发现新版 API 不兼容。成功后从对应运行的 Artifacts 下载 `gitlab-workbench-idea`，解压 artifact 外层后安装其中的插件 ZIP。CI 不发布 Marketplace。
 
 ## 验证范围
 
 `core` 子项目不依赖 IDEA SDK，可独立测试分支规范、分页、凭据发送、审批过滤、SHA 校验、未知创建结果核对、compare、MR 参数、HTTP 超时及拒绝重定向。与 VS Code 共用 `packages/contract-tests/branch-names.json`，确保规范一致。
 
-当前开发环境已验证 IDEA 2026.2.3 SDK 下载、完整插件编译和 `buildPlugin` 打包。GitHub Actions 同样执行构建和测试，安装包位于本地 `apps/idea/build/distributions` 或成功运行的 Artifacts。当前未进行真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
+本地和 CI 都可通过 `-PideaVersion=<版本>` 覆盖构建 SDK。插件不设置 `until-build`，因此新的 IntelliJ IDEA 不会仅因版本号被阻止安装；这不等于未来 API 永远保持二进制兼容。定时 CI 失败时需要修复代码、验证并发布新插件版本。当前未进行真实公司 GitLab 联调，权限、证书、代理和界面行为仍需在目标环境验证。
 
 插件使用 IDE 的默认代理选择器与 CertificateManager SSL 上下文，可通过 **Settings → HTTP Proxy / Server Certificates** 配置公司网络和受信任证书，不禁用 HTTPS 校验。连接不自动跟随重定向，避免将 Token 发往其他实例。错误信息区分 Token 无效、权限不足、项目不可见、SSO/重定向、代理认证、DNS、证书及超时，不回显 Token 或原始服务端响应。
 
